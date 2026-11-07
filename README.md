@@ -5,9 +5,9 @@ A Kotlin implementation of the GroupChat CQRS and event-sourcing example, built 
 The module layout and the Write API follow the Java v5 implementation in
 [cqrs-es-example-java](https://github.com/j5ik2o/cqrs-es-example-java).
 
-This repository implements the command side, the Write API, the Read API, and the read model
-updater (RMU). The end-to-end compose test, the RMU recovery path, and the Lambda deployment are
-not implemented yet.
+This repository implements the command side, the Write API, the Read API, the read model
+updater (RMU), and the end-to-end compose test. The RMU recovery path and the AWS deployment
+assets for Lambda and SQS are included as well.
 
 ## Architecture
 
@@ -38,8 +38,9 @@ from the event store and never reads the read model.
 | `bootstrap` | Spring Boot entry point and configuration | `bootstrap` |
 
 The Read API uses Spring `JdbcTemplate` rather than the Java implementation's MyBatis. The RMU
-reads the head Streams directly with the AWS SDK; the Lambda handler, recovery tasks, and resync
-path are not ported yet.
+reads the head Streams directly with the AWS SDK. It includes the Lambda handlers, the recovery
+tasks, and the resync path. The AWS deployment asset and its runbook are in
+[deploy/README.ja.md](deploy/README.ja.md).
 
 ## Requirements
 
@@ -317,12 +318,22 @@ queries filter them out.
   of a multi-event record, and recovery tasks for parse failures.
 - `RecoveryServiceTest` covers idempotent task recording, journal replay from the current position,
   completion, and skipping tasks from another store, using MySQL Testcontainers.
+- `RmuDeploymentTemplateTest` checks the CloudFormation event source mapping, timeouts, DLQs,
+  environment variables, handler names, and alarms.
+- `LambdaStreamRecordsTest` checks the conversion from the Lambda event model to SDK v2 records and
+  the partial batch failure handling.
+- `SqsRecoveryNotifierTest` checks that the notification body carries identifiers only.
+- `RecoveryWorkerTest` and `ResyncWorkerTest` check the recovery batch cap and redelivery, and the
+  resync counts.
+- `LambdaSettingsTest` checks the environment defaults and validation, and the Secrets Manager
+  resolution.
 
 ## CI
 
-`.github/workflows/ci.yml` runs three jobs on pushes and pull requests to `main`:
+`.github/workflows/ci.yml` runs four jobs on pushes and pull requests to `main`:
 
 - `lint`: `./gradlew spotlessCheck`
+- `deploy-assets`: `cfn-lint`, shell syntax checks, and a `:rmu:lambdaZip` build plus package checks
 - `test`: `./gradlew test`
 - `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
 
@@ -330,12 +341,12 @@ The test and e2e jobs rely on Docker.
 
 ## Remaining work
 
-The recovery path from the A proposal is in place. The remaining work is:
+The recovery path from the A proposal and the AWS deployment assets are in place. The remaining
+work is:
 
-1. Add the SQS notifier, the Lambda handler, and the AWS deployment assets if the common milestone
-   requires them. SQS stays delivery-only; the event body is still re-read from the journal.
-2. Add an operational procedure for a stop longer than the 24-hour retention window, including the
-   startup full resync and alerts.
+1. Deploy to a real AWS account and configure the alarm actions. A deployment needs the owner's
+   approval.
+2. Document MySQL credential rotation.
 3. Document the final port, table, and environment variable conventions in the hub acceptance
    criteria.
 

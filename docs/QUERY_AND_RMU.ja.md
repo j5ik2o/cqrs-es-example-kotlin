@@ -102,11 +102,16 @@ RMU は M2 の復旧 A 案に合わせて、再試行、永続復旧タスク、
 - `ResyncerTest` は head と位置の差の journal 補完、恒久的な失敗の復旧タスク、ストレージ障害での中断を確認します。
 - `ReadModelUpdaterRecoveryTest` は再試行、再試行上限後の復旧タスク、複数イベントの復旧対象、解析失敗の復旧タスクを確認します。
 - `RecoveryServiceTest` は復旧タスクの冪等な記録、位置を読み直す復旧、完了の確認、他ストアのタスクの除外を確認します。
+- `RmuDeploymentTemplateTest` は CloudFormation テンプレートのイベントソースマッピング、タイムアウト、DLQ、環境変数、ハンドラ名、アラームを確認します。
+- `LambdaStreamRecordsTest` は Lambda のイベント型から SDK v2 のレコードへの変換と、部分バッチの失敗の扱いを確認します。
+- `SqsRecoveryNotifierTest` は通知の本文に識別子だけが入り、イベント本文が入らないことを確認します。
+- `RecoveryWorkerTest` と `ResyncWorkerTest` は、復旧ワーカーのバッチ上限と再配信、再同期ワーカーの件数の返却を確認します。
+- `LambdaSettingsTest` は環境変数の既定値と検証、Secrets Manager のシークレットの解決を確認します。
 
 ## 残作業
 
-復旧 A 案の実装は入りました。残りは次のとおりです。
+復旧 A 案の実装と AWS 向けのデプロイ資産は入りました。残りは次のとおりです。
 
-1. SQS の notifier と Lambda ハンドラ、AWS のデプロイ資産を追加します。SQS は配送専用とし、イベント本文は journal から読み直す方針を保ちます。
-2. 24 時間を超える停止に備えた運用手順（起動時の全件再同期、アラート）を整えます。
+1. 実際の AWS 環境へのデプロイと、アラームの通知先の設定。
+2. MySQL の認証情報のローテーション手順。
 3. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。

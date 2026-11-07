@@ -11,3 +11,9 @@ re-reads the position and replays the journal in order, so it is idempotent. The
 stream subscription before it reconciles every head on startup, then scans while the subscription
 keeps applying records (DY-15). A trimmed stream triggers another resync. Each task records the
 store, projection, aggregate, sequence number, and failure kind.
+
+The module also contains the Lambda entry points. `RmuLambdaHandler` applies head stream records and
+returns partial batch failures, `RecoveryWorker` drains pending tasks from SQS, and `ResyncWorker`
+runs the full reconciliation. `SqsRecoveryNotifier` sends identifier-only wake-up messages; the
+event body is always re-read from the journal. The CloudFormation template, apply script, and runbook
+are in `deploy/README.ja.md`.

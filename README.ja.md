@@ -3,7 +3,7 @@
 GroupChat の CQRS とイベントソーシングのサンプルを Kotlin で実装したものです。event-store-adapter-kotlin 5.1.0 を使い、モジュール構成と Write API は
 [cqrs-es-example-java](https://github.com/j5ik2o/cqrs-es-example-java) の v5 実装に合わせています。
 
-現在の実装範囲は command 側、Write API、Read API、RMU です。compose を使った e2e、RMU の復旧処理、Lambda 版はまだありません。
+現在の実装範囲は command 側、Write API、Read API、RMU、compose を使った e2e です。RMU の復旧処理と、Lambda と SQS を使う AWS 向けのデプロイ資産も入っています。
 
 ## 全体の構成
 
@@ -104,6 +104,8 @@ RMU は head テーブルの DynamoDB Streams を購読します。`INSERT` と 
 ローカルの RMU は `TRIM_HORIZON` から読み始めるため、再起動すると保持されているレコードを読み直します。適用済みのイベントは位置で捨てます。一時的な失敗は指数バックオフとジッターで再試行します。恒久的な失敗、または回数上限・経過時間の上限に達した再試行は、`read_model_recovery_tasks` に復旧タスクとして記録します。タスクにはストア ID、投影名と版、集約 ID、`seq_nr`、失敗種別、エラーを保存します。復旧は位置を読み直してから journal を昇順に適用するため、同じタスクを 2 回処理しても結果は変わりません。
 
 RMU は起動時に先に Streams の購読を再開してから、購読と並行して head を全件照合します。長い Scan 中に書かれた更新も保持期間内に購読で届きます。Scan は ConsistentRead を使い、`__config__` と他の集約型を除外します。head の `seq_nr` と投影位置の差は journal から補います。購読と Scan は同じ「現在位置 + 1」のガードとトランザクションを使うため、両方から届いたイベントは 1 回だけ適用されます。Streams が切り詰められたときは全件を再同期します。イテレータが期限切れになったときは、最後に処理したシーケンス番号の次から再開します。保留中の復旧タスクは起動時とその後定期的に再試行します。
+
+Lambda と SQS を使う AWS 向けのデプロイ資産と運用手順は [deploy/README.ja.md](deploy/README.ja.md) にあります。復旧タスクの通知は識別子だけを送り、イベント本文は journal から読み直します。
 
 ## ローカルで動かす
 
@@ -246,12 +248,18 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 - `ResyncerTest` は head と位置の差の journal 補完、恒久的な失敗の復旧タスク、ストレージ障害での中断を確認します。
 - `ReadModelUpdaterRecoveryTest` は再試行、再試行上限後の復旧タスク、複数イベントの復旧対象、解析失敗の復旧タスクを確認します。
 - `RecoveryServiceTest` は復旧タスクの冪等な記録、位置を読み直す復旧、完了の確認、他ストアのタスクの除外を MySQL の Testcontainers で確認します。
+- `RmuDeploymentTemplateTest` は CloudFormation テンプレートのイベントソースマッピング、タイムアウト、DLQ、環境変数、ハンドラ名、アラームを確認します。
+- `LambdaStreamRecordsTest` は Lambda のイベント型から SDK v2 のレコードへの変換と、部分バッチの失敗の扱いを確認します。
+- `SqsRecoveryNotifierTest` は通知の本文に識別子だけが入ることを確認します。
+- `RecoveryWorkerTest` と `ResyncWorkerTest` は、復旧ワーカーのバッチ上限と再配信、再同期ワーカーの件数の返却を確認します。
+- `LambdaSettingsTest` は環境変数の既定値と検証、Secrets Manager のシークレットの解決を確認します。
 
 ## CI
 
-`.github/workflows/ci.yml` は `main` への push と pull request で 3 つのジョブを実行します。
+`.github/workflows/ci.yml` は `main` への push と pull request で 4 つのジョブを実行します。
 
 - `lint`: `./gradlew spotlessCheck`
+- `deploy-assets`: `cfn-lint`、シェルスクリプトの構文確認、`:rmu:lambdaZip` のビルドと中身の確認
 - `test`: `./gradlew test`
 - `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
 
@@ -259,10 +267,10 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 
 ## 残作業
 
-復旧 A 案の実装は入りました。残りは次のとおりです。
+復旧 A 案の実装と AWS 向けのデプロイ資産は入りました。残りは次のとおりです。
 
-1. SQS の notifier、Lambda ハンドラ、AWS のデプロイ資産を、共通のマイルストーンで必要なら追加します。SQS は配送専用とし、イベント本文は journal から読み直す方針を保ちます。
-2. 24 時間を超える停止に備えた運用手順（起動時の全件再同期、アラート）を整えます。
+1. 実際の AWS 環境へのデプロイと、アラームの通知先の設定。デプロイにはオーナーの承認が要ります。
+2. MySQL の認証情報のローテーション手順。
 3. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。
 
 ## Java 版との対応
@@ -271,7 +279,7 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 - Write API と Read API のスキーマは Java 版の `graphql-write/schema.graphqls` と `graphql-read/schema.graphqls` に合わせています。Read API の型名は `GroupChat`、`Member`、`Message`、時刻は `NaiveDateTime` です。
 - イベントの manifest と 3 テーブルの構成は Java 版の v5 実装に合わせています。
 - Read API の DAO は、Java 版の MyBatis ではなく Spring の `JdbcTemplate` を使います。
-- RMU は復旧タスクと再同期を含みます。Lambda ハンドラと SQS の notifier は含みません。AWS SDK で head Streams と journal を直接読みます。
+- RMU は復旧タスクと再同期に加えて、Lambda ハンドラと SQS の notifier を含みます。AWS SDK で head Streams と journal を直接読みます。
 - Kotlin の命名規則に合わせて、パッケージ名は `interfaceadaptor` にしました。ディレクトリ名は Java 版に合わせて `interface-adaptor-*` のままです。ktlint の `package-name` ルールがアンダースコアを許可しないためです。
 - Write API のポートは 56080、Read API のポートは 56082 です。68080 は 65535 を超えるため使えません。
 - e2e の compose と検証スクリプトは Java 版の構成に合わせています。README は既存の英語版と日本語版の両方を更新しました。
