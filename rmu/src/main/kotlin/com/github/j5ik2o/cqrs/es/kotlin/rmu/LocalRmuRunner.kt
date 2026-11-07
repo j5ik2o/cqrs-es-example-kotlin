@@ -47,17 +47,7 @@ class LocalRmuRunner(
 
             while (!Thread.currentThread().isInterrupted) {
                 try {
-                    if (subscription.isResyncRequested()) {
-                        logger.warn("The stream was trimmed; running a full resync")
-                        if (!resync("resync after trimmed stream")) {
-                            sleep(backoff.next())
-                            continue
-                        }
-                        subscription.clearResyncRequest()
-                        subscription.reset()
-                        backoff.reset()
-                        continue
-                    }
+                    if (handleResyncRequest()) continue
 
                     val lastRecordTime = subscription.lastRecordTime()
                     if (shouldResync(lastRecordTime, lastSuccessfulResyncAt, Instant.now())) {
@@ -110,6 +100,25 @@ class LocalRmuRunner(
             sleep(backoff.next())
         }
         return false
+    }
+
+    /**
+     * Runs the resync the subscription asked for, if any. It clears the request before the scan:
+     * a trim that arrives while the scan runs raises it again, so its gap is not dropped when the
+     * scan finishes. A failed attempt raises it again instead of waiting for the retention window.
+     */
+    internal fun handleResyncRequest(): Boolean {
+        if (!subscription.isResyncRequested()) return false
+        logger.warn("The stream was trimmed; running a full resync")
+        subscription.clearResyncRequest()
+        if (!resync("resync after trimmed stream")) {
+            subscription.requestResync()
+            sleep(backoff.next())
+            return true
+        }
+        subscription.reset()
+        backoff.reset()
+        return true
     }
 
     private fun resync(label: String): Boolean =

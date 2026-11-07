@@ -111,6 +111,52 @@ class LocalRmuRunnerTest {
         assertEquals(3L, applier.position(AGGREGATE_ID))
     }
 
+    @Test
+    fun `handles a trimmed stream request and resets the subscription`() {
+        val subscription = FakeSubscription()
+        subscription.requestResync()
+        val applier = JournalBackedApplier(emptyMap())
+        var scans = 0
+        val scanner =
+            HeadScanner {
+                scans++
+            }
+        val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
+
+        assertTrue(runner.handleResyncRequest())
+
+        assertEquals(1, scans)
+        assertFalse(subscription.isResyncRequested())
+        assertEquals(1, subscription.resets)
+    }
+
+    @Test
+    fun `keeps a trim that arrives during the resync`() {
+        val subscription = FakeSubscription()
+        subscription.requestResync()
+        val applier = JournalBackedApplier(emptyMap())
+        val scanner = HeadScanner { subscription.requestResync() }
+        val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
+
+        assertTrue(runner.handleResyncRequest())
+
+        assertTrue(subscription.isResyncRequested())
+    }
+
+    @Test
+    fun `re-raises the resync request when the resync fails`() {
+        val subscription = FakeSubscription()
+        subscription.requestResync()
+        val applier = JournalBackedApplier(emptyMap())
+        val scanner = HeadScanner { throw ReadModelUpdateException("storage down") }
+        val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
+
+        assertTrue(runner.handleResyncRequest())
+
+        assertTrue(subscription.isResyncRequested())
+        assertEquals(0, subscription.resets)
+    }
+
     private fun newRunner(
         subscription: StreamSubscription,
         resyncer: Resyncer,
@@ -152,6 +198,10 @@ class LocalRmuRunnerTest {
         override fun lastRecordTime(): Instant? = null
 
         override fun isResyncRequested(): Boolean = requested
+
+        override fun requestResync() {
+            requested = true
+        }
 
         override fun clearResyncRequest() {
             requested = false

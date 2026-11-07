@@ -25,6 +25,9 @@ interface StreamSubscription {
     /** True when the poller saw a trimmed stream and the runner has not handled it yet. */
     fun isResyncRequested(): Boolean
 
-    /** Clears the trimmed-stream request after a full resync succeeds. */
+    /** Raises the trimmed-stream request, for example when a resync attempt fails. */
+    fun requestResync()
+
+    /** Clears the trimmed-stream request before the runner starts a resync. */
     fun clearResyncRequest()
 }
