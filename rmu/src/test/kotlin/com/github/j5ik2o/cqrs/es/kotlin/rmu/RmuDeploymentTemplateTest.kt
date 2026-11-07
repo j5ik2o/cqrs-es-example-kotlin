@@ -225,6 +225,7 @@ class RmuDeploymentTemplateTest {
         )
     }
 
+    /** Checks that every alarm reads its threshold, periods, and notification target from parameters. */
     @Test
     fun `parameterizes every alarm threshold evaluation period and notification target`() {
         val template = template()
@@ -253,6 +254,7 @@ class RmuDeploymentTemplateTest {
         }
     }
 
+    /** Checks that the alarm parameters reject periods and thresholds operators cannot use. */
     @Test
     fun `keeps the alarm parameter bounds meaningful`() {
         val parameters = template().path("Parameters")
@@ -274,6 +276,7 @@ class RmuDeploymentTemplateTest {
         }
     }
 
+    /** Checks that both dead-letter queues have a backlog alarm. */
     @Test
     fun `alarms on both dead letter queues`() {
         val template = template()
@@ -292,6 +295,7 @@ class RmuDeploymentTemplateTest {
         )
     }
 
+    /** Checks that operators can apply the sample parameters without editing the template. */
     @Test
     fun `ships example parameters that match the template`() {
         val parameters = template().path("Parameters")
@@ -316,6 +320,7 @@ class RmuDeploymentTemplateTest {
         }
     }
 
+    /** Checks that the runbook keeps the resync order and the alarm response steps. */
     @Test
     fun `documents the long outage resync procedure and alarm response`() {
         val runbook = readDocument("docs/RMU_OPERATIONS.ja.md")
@@ -357,6 +362,7 @@ class RmuDeploymentTemplateTest {
         }
     }
 
+    /** Returns the CloudWatch alarms keyed by their logical IDs. */
     private fun cloudWatchAlarms(template: JsonNode): Map<String, JsonNode> =
         template
             .path("Resources")
@@ -365,6 +371,7 @@ class RmuDeploymentTemplateTest {
             .filter { it.value.path("Type").asText() == "AWS::CloudWatch::Alarm" }
             .associate { it.key to it.value }
 
+    /** Reads the sample parameter file used for deploy validation. */
     private fun exampleParameters(): List<JsonNode> =
         try {
             mapper.readTree(repositoryFile("deploy/parameters.example.json").toFile()).toList()
@@ -372,6 +379,7 @@ class RmuDeploymentTemplateTest {
             throw UncheckedIOException(e)
         }
 
+    /** Reads a repository document as UTF-8 text. */
     private fun readDocument(relative: String): String =
         try {
             Files.readString(repositoryFile(relative))
