@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Profile
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
 
 @Repository
 @Profile("read")
@@ -28,8 +29,8 @@ class GroupChatReadDao(
                     id = rs.getString("id"),
                     name = rs.getString("name"),
                     ownerId = rs.getString("owner_id"),
-                    createdAt = rs.getTimestamp("created_at").toLocalDateTime(),
-                    updatedAt = rs.getTimestamp("updated_at").toLocalDateTime(),
+                    createdAt = rs.getObject("created_at", LocalDateTime::class.java),
+                    updatedAt = rs.getObject("updated_at", LocalDateTime::class.java),
                 )
             }
 

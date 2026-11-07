@@ -16,6 +16,8 @@ Read API は `graphql-read/schema.graphqls` の 6 つの Query を実装しま�
 
 単一値の Query で行が見つからないときは `ReadModelNotFoundException` を投げ、`@GraphQlExceptionHandler` で GraphQL エラーに変換します。拡張の `code` は `404` です。一覧の Query は空の一覧を返します。
 
+Read API は呼び出し元を認証しません。`userAccountId` はクライアントが渡した値をそのまま信頼するため、API に到達できる人は任意のメンバーとして閲覧できます。実運用では、認証済みのコンテキストから閲覧者 ID を取得してください。
+
 削除されたグループチャットとメッセージは、`disabled` フラグで残します。Read API の SQL は `disabled = 0` で除外します。
 
 ## RMU

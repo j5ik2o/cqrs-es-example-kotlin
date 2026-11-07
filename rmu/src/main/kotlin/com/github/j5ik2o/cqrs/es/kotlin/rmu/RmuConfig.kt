@@ -9,11 +9,10 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.awscore.client.builder.AwsClientBuilder
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient
-import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClient
-import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClientBuilder
 import java.net.URI
 
 @Configuration
@@ -61,22 +60,7 @@ class RmuConfig(
         readModelUpdater: ReadModelUpdater,
     ): HeadStreamPoller = HeadStreamPoller(headStreamClient, readModelUpdater::update, maxItemCount)
 
-    private fun DynamoDbClientBuilder.applyClientConfig(): DynamoDbClientBuilder {
-        region(Region.of(dynamoDbRegion))
-        if (dynamoDbEndpointUrl.isNotBlank()) {
-            endpointOverride(URI.create(dynamoDbEndpointUrl))
-        }
-        if (dynamoDbAccessKey.isNotBlank() && dynamoDbSecretAccessKey.isNotBlank()) {
-            credentialsProvider(
-                StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(dynamoDbAccessKey, dynamoDbSecretAccessKey),
-                ),
-            )
-        }
-        return this
-    }
-
-    private fun DynamoDbStreamsClientBuilder.applyClientConfig(): DynamoDbStreamsClientBuilder {
+    private fun <B : AwsClientBuilder<B, *>> B.applyClientConfig(): B {
         region(Region.of(dynamoDbRegion))
         if (dynamoDbEndpointUrl.isNotBlank()) {
             endpointOverride(URI.create(dynamoDbEndpointUrl))

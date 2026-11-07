@@ -113,6 +113,11 @@ The types are `GroupChat`, `Member`, and `Message`. `createdAt` and `updatedAt` 
 Every query uses `userAccountId` as the viewer and as the visibility filter. A non-member gets an
 empty list, or a GraphQL error with code `404` for a single-value query.
 
+The Read API does not authenticate callers. It trusts the `userAccountId` supplied by the client,
+so anyone who can reach the API can read another member's group chats and messages. Do not expose
+it without an authentication layer. A production deployment should take the viewer ID from the
+authenticated context.
+
 ## Read model updater
 
 The RMU follows the head table's DynamoDB Streams. For each `INSERT` and `MODIFY` record it skips
