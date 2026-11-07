@@ -5,6 +5,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,7 +31,7 @@ class HeadStreamSubscriptionTest {
 
     @Test
     fun `requests a resync and resets the reader when the stream was trimmed`() {
-        val reader = FakeReader(failure = StreamTrimmedException("shard-1"))
+        val reader = FakeReader(failure = StreamTrimmedException("shard-1"), failOnce = true)
         val subscription = HeadStreamSubscription(reader, "head", backoff)
         try {
             subscription.start()
@@ -106,14 +107,19 @@ class HeadStreamSubscriptionTest {
     private class FakeReader(
         private val onPoll: (() -> Unit)? = null,
         private val failure: RuntimeException? = null,
+        private val failOnce: Boolean = false,
     ) : HeadStreamReader {
         val polls = AtomicInteger()
         val resets = AtomicInteger()
+        private val failureRaised = AtomicBoolean(false)
 
         override fun pollOnce(headTableName: String): Int {
             polls.incrementAndGet()
             onPoll?.invoke()
-            failure?.let { throw it }
+            val shouldFail = failure != null && (!failOnce || failureRaised.compareAndSet(false, true))
+            if (shouldFail) {
+                failure?.let { throw it }
+            }
             return 0
         }
 

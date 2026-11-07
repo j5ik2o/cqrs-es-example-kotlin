@@ -72,7 +72,7 @@ RMU は M2 の復旧 A 案に合わせて、再試行、永続復旧タスク、
 
 ### ローカル実行
 
-`LocalRmuRunner` は `CommandLineRunner` として動きます。`HeadStreamSubscription` が専用スレッドで `HeadStreamPoller.pollOnce` を繰り返し、`LocalRmuRunner` がそのスレッドを起動してから再同期を始めます。レコードがないときは指数バックオフで待ちます。エラーが起きたときもログを出して待ち、次のポーリングを続けます。Streams が切り詰められると購読スレッドは再同期の要求を立てて待機し、`LocalRmuRunner` が再同期を終えてから購読を再開します。再同期は `LocalRmuRunner` だけが実行するため、同時に 2 つ走りません。
+`LocalRmuRunner` は `CommandLineRunner` として動きます。`HeadStreamSubscription` が専用スレッドで `HeadStreamPoller.pollOnce` を繰り返し、`LocalRmuRunner` がそのスレッドを起動してから再同期を始めます。レコードがないときは指数バックオフで待ちます。エラーが起きたときもログを出して待ち、次のポーリングを続けます。Streams が切り詰められると購読スレッドは再同期の要求を立て、イテレータを捨ててバックオフ時間だけ待ち、`TRIM_HORIZON` から読み直します。`LocalRmuRunner` は要求を検知して再同期を購読と並行して実行し、成功したら要求を解除します。再同期は `LocalRmuRunner` だけが実行するため、同時に 2 つ走りません。
 
 ## リードモデル
 

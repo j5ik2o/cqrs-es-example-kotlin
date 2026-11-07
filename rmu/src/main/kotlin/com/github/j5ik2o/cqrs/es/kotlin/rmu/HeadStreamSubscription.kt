@@ -82,8 +82,10 @@ class HeadStreamSubscription(
                     e.shardId,
                     e,
                 )
-                resyncRequested.set(true)
+                // Reset before raising the request, so a runner that sees the request also sees
+                // the dropped iterators.
                 reader.reset()
+                resyncRequested.set(true)
                 if (!pause()) return
             } catch (e: RuntimeException) {
                 // Match the previous single-thread loop: log, back off, and keep polling. A
