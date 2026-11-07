@@ -66,13 +66,13 @@ RMU は M2 の復旧 A 案に合わせて、再試行、永続復旧タスク、
 
 - 再試行: `RetryPolicy` が回数上限と最大経過時間を守り、指数バックオフとフルジッターで待ちます。恒久的な失敗（payload、journal の欠番、MySQL の制約違反）は再試行せず、復旧タスクにします。
 - 永続復旧タスク: `read_model_recovery_tasks` にストア ID、投影名と版、集約 ID、seq_nr、失敗種別、エラーを記録します。タスクは識別子だけを持ち、イベント本文は journal から読み直します。復旧は位置を読み直してから journal を昇順に適用し、対象位置に達したことを確認して完了にします。同じタスクを 2 回処理しても結果は変わりません。
-- 再同期（DY-15）: 起動時に head を ConsistentRead で全ページ Scan し、`__config__` と他の集約型を除外します。head の seq_nr と投影位置を比べ、遅れを journal から補います。Streams が切り詰められたときは全件再同期し、イテレータが期限切れになったときはシャードの最後の位置から再開します。
-- 実行: `LocalRmuRunner` は起動時に再同期と保留タスクの復旧を行い、その後は Streams を購読します。24 時間を超えてレコードを読めなかった場合と Streams が切り詰められた場合は、全件再同期してから購読を再開します。保留タスクは 1 分ごとに再試行します。
+- 再同期（DY-15）: 先に Streams の購読を再開し、購読と並行して head を ConsistentRead で全ページ Scan します。Scan は `__config__` と他の集約型を除外します。head の seq_nr と投影位置を比べ、遅れを journal から補います。購読と Scan の両方が同じレコードを適用しても、位置のガードとトランザクションが重複を捨てます。Streams が切り詰められたときは全件再同期し、イテレータが期限切れになったときはシャードの最後の位置から再開します。
+- 実行: `LocalRmuRunner` は起動時に購読スレッドを先に動かし、そのまま再同期と保留タスクの復旧を行います。24 時間を超えてレコードを読めなかった場合と Streams が切り詰められた場合は、全件再同期してから購読を続けます。保留タスクは 1 分ごとに再試行します。
 - 設定: 再試行の回数・最大経過時間・待機時間、ポーリングのバックオフ、復旧の間隔と 1 回の上限は `app.stream.*` で指定します。
 
 ### ローカル実行
 
-`LocalRmuRunner` は `CommandLineRunner` として動き、起動時に再同期と保留タスクの復旧を行い、その後 `HeadStreamPoller.pollOnce` を繰り返します。レコードがないときは指数バックオフで待ちます。エラーが起きたときもログを出して待ち、次のポーリングを続けます。
+`LocalRmuRunner` は `CommandLineRunner` として動きます。`HeadStreamSubscription` が専用スレッドで `HeadStreamPoller.pollOnce` を繰り返し、`LocalRmuRunner` がそのスレッドを起動してから再同期を始めます。レコードがないときは指数バックオフで待ちます。エラーが起きたときもログを出して待ち、次のポーリングを続けます。Streams が切り詰められると購読スレッドは再同期の要求を立てて待機し、`LocalRmuRunner` が再同期を終えてから購読を再開します。再同期は `LocalRmuRunner` だけが実行するため、同時に 2 つ走りません。
 
 ## リードモデル
 
@@ -93,7 +93,9 @@ RMU は M2 の復旧 A 案に合わせて、再試行、永続復旧タスク、
 - `ReadApiResolverTest` は MySQL の Testcontainers に対して 6 つの Query を実行し、`userAccountId` の絞り込み、404 のエラー、`NaiveDateTime` の形式を確認します。
 - `HeadRecordParserTest` は `__config__`、他の集約型、`REMOVE`、events の欠落を確認します。
 - `HeadStreamPollerTest` はシャードの読み取り、イテレータの期限切れ、切り詰めの検出、ページ上限を確認します。
-- `ReadModelUpdaterTest` は位置の前進、重複と古いイベントの破棄、journal からの補完、削除、同時適用、位置行の同時作成、再起動後の再開を確認します。
+- `HeadStreamSubscriptionTest` は購読スレッドの即時ポーリング、切り詰め時の再同期要求とリセット、停止の伝播を確認します。
+- `LocalRmuRunnerTest` は保持期限の判定に加え、購読を Scan より先に開始することと、Scan 中に入った更新を購読と journal の補完で取りこぼさないことを確認します。
+- `ReadModelUpdaterTest` は位置の前進、重複と古いイベントの破棄、journal からの補完、削除、同時適用、journal の範囲適用と head イベントの同時適用、位置行の同時作成、再起動後の再開を確認します。
 - `RetryPolicyTest` は再試行の回数上限、経過時間の上限、恒久的な失敗の非再試行、指数バックオフとリセットを確認します。
 - `FailureClassifierTest` は恒久的な失敗と再試行可能な失敗の分類を確認します。
 - `DynamoDbHeadScannerTest` は LocalStack で複数ページの Scan、`__config__` と他の集約型の除外、store_id の取得を確認します。

@@ -19,7 +19,7 @@ class HeadStreamPoller(
     private val handler: (Record) -> Unit,
     private val maxItemCount: Int = 32,
     private val maxPagesPerShard: Int = 10,
-) {
+) : HeadStreamReader {
     private val iterators = mutableMapOf<String, String>()
     private val lastSequenceNumbers = mutableMapOf<String, String>()
     private val completedShards = mutableSetOf<String>()
@@ -28,7 +28,7 @@ class HeadStreamPoller(
     private var lastRecordTime: Instant? = null
 
     @Synchronized
-    fun pollOnce(headTableName: String): Int {
+    override fun pollOnce(headTableName: String): Int {
         val streamArn = client.streamArn(headTableName)
         var processed = 0
         var lastEvaluatedShardId: String? = null
@@ -85,15 +85,14 @@ class HeadStreamPoller(
     }
 
     @Synchronized
-    fun reset() {
+    override fun reset() {
         iterators.clear()
         lastSequenceNumbers.clear()
         completedShards.clear()
         lastRecordTime = null
     }
 
-    /** The time the last record was read, or null when no record has been read yet. */
-    fun lastRecordTime(): Instant? = lastRecordTime
+    override fun lastRecordTime(): Instant? = lastRecordTime
 
     private fun nextIteratorAfterLastSequence(
         streamArn: String,
