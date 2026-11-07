@@ -1,9 +1,12 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "RMU Lambda, head-stream event source mapping, OnFailure SQS, SQS recovery worker, resync worker, and CloudWatch alarms for cqrs-es-example-kotlin. Build the Lambda code artifact with deploy/build-lambda-package.sh and upload it before applying this stack.",
+  "Description": "RMU Lambda, head-stream event source mapping, OnFailure SQS, SQS recovery worker, resync worker, and parameterized CloudWatch alarms for cqrs-es-example-kotlin. Build the Lambda code artifact with deploy/build-lambda-package.sh and upload it before applying this stack.",
   "Metadata": {
     "Project": "cqrs-es-example-kotlin",
-    "Issue": "https://github.com/j5ik2o/cqrs-es-example-kotlin/issues/10"
+    "Issues": [
+      "https://github.com/j5ik2o/cqrs-es-example-kotlin/issues/10",
+      "https://github.com/j5ik2o/cqrs-es-example-kotlin/issues/13"
+    ]
   },
   "Parameters": {
     "CodeS3Bucket": {
@@ -150,13 +153,105 @@
     "AlarmSnsTopicArn": {
       "Type": "String",
       "Default": "",
-      "Description": "Optional SNS topic ARN that receives the CloudWatch alarm actions. Leave empty to create the alarms without actions."
+      "Description": "Optional SNS topic ARN that receives every CloudWatch alarm action. Leave empty to create the alarms without actions; set the real topic ARN per environment instead of editing the template."
+    },
+    "AlarmPeriodSeconds": {
+      "Type": "Number",
+      "Default": 300,
+      "MinValue": 60,
+      "MaxValue": 86400,
+      "Description": "Evaluation period in seconds shared by every alarm. CloudWatch keeps the last 300 seconds as the default window."
     },
     "RecoveryBacklogThreshold": {
       "Type": "Number",
       "Default": 10,
       "MinValue": 1,
       "Description": "Visible recovery queue messages that trigger the backlog alarm."
+    },
+    "RecoveryBacklogEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 2,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive recovery backlog periods that must breach the threshold before the alarm fires."
+    },
+    "OnFailureQueueThreshold": {
+      "Type": "Number",
+      "Default": 0,
+      "MinValue": 0,
+      "Description": "Visible OnFailure queue messages that trigger the exhausted-retry alarm."
+    },
+    "OnFailureQueueEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive OnFailure queue periods that must breach the threshold before the alarm fires."
+    },
+    "OnFailureDlqThreshold": {
+      "Type": "Number",
+      "Default": 0,
+      "MinValue": 0,
+      "Description": "Visible OnFailure dead-letter queue messages that trigger the alarm."
+    },
+    "OnFailureDlqEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive OnFailure dead-letter queue periods that must breach the threshold before the alarm fires."
+    },
+    "RecoveryDlqThreshold": {
+      "Type": "Number",
+      "Default": 0,
+      "MinValue": 0,
+      "Description": "Visible recovery dead-letter queue messages that trigger the alarm."
+    },
+    "RecoveryDlqEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive recovery dead-letter queue periods that must breach the threshold before the alarm fires."
+    },
+    "RecoveryWorkerErrorsThreshold": {
+      "Type": "Number",
+      "Default": 0,
+      "MinValue": 0,
+      "Description": "Recovery worker errors in a period that trigger the alarm."
+    },
+    "RecoveryWorkerErrorsEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive recovery worker error periods that must breach the threshold before the alarm fires."
+    },
+    "ResyncWorkerErrorsThreshold": {
+      "Type": "Number",
+      "Default": 0,
+      "MinValue": 0,
+      "Description": "Resync worker errors in a period that trigger the alarm."
+    },
+    "ResyncWorkerErrorsEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive resync worker error periods that must breach the threshold before the alarm fires."
+    },
+    "ResyncScheduleFailedInvocationsThreshold": {
+      "Type": "Number",
+      "Default": 0,
+      "MinValue": 0,
+      "Description": "Failed resync schedule invocations in a period that trigger the alarm."
+    },
+    "ResyncScheduleFailedInvocationsEvaluationPeriods": {
+      "Type": "Number",
+      "Default": 1,
+      "MinValue": 1,
+      "MaxValue": 100,
+      "Description": "Consecutive failed resync schedule periods that must breach the threshold before the alarm fires."
     }
   },
   "Conditions": {
@@ -900,8 +995,12 @@
           }
         ],
         "Statistic": "Maximum",
-        "Period": 300,
-        "EvaluationPeriods": 2,
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "RecoveryBacklogEvaluationPeriods"
+        },
         "Threshold": {
           "Ref": "RecoveryBacklogThreshold"
         },
@@ -937,9 +1036,15 @@
           }
         ],
         "Statistic": "Sum",
-        "Period": 300,
-        "EvaluationPeriods": 1,
-        "Threshold": 0,
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "RecoveryWorkerErrorsEvaluationPeriods"
+        },
+        "Threshold": {
+          "Ref": "RecoveryWorkerErrorsThreshold"
+        },
         "ComparisonOperator": "GreaterThanThreshold",
         "TreatMissingData": "notBreaching",
         "AlarmActions": {
@@ -975,9 +1080,59 @@
           }
         ],
         "Statistic": "Maximum",
-        "Period": 300,
-        "EvaluationPeriods": 1,
-        "Threshold": 0,
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "OnFailureQueueEvaluationPeriods"
+        },
+        "Threshold": {
+          "Ref": "OnFailureQueueThreshold"
+        },
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "AlarmSnsTopicArn"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
+    },
+    "OnFailureDlqAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "The OnFailure dead-letter queue has messages. A failed stream batch exhausted its OnFailure queue retries and needs a manual replay.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "OnFailureDlq",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "OnFailureDlqEvaluationPeriods"
+        },
+        "Threshold": {
+          "Ref": "OnFailureDlqThreshold"
+        },
         "ComparisonOperator": "GreaterThanThreshold",
         "TreatMissingData": "notBreaching",
         "AlarmActions": {
@@ -1013,9 +1168,15 @@
           }
         ],
         "Statistic": "Maximum",
-        "Period": 300,
-        "EvaluationPeriods": 1,
-        "Threshold": 0,
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "RecoveryDlqEvaluationPeriods"
+        },
+        "Threshold": {
+          "Ref": "RecoveryDlqThreshold"
+        },
         "ComparisonOperator": "GreaterThanThreshold",
         "TreatMissingData": "notBreaching",
         "AlarmActions": {
@@ -1048,9 +1209,15 @@
           }
         ],
         "Statistic": "Sum",
-        "Period": 300,
-        "EvaluationPeriods": 1,
-        "Threshold": 0,
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "ResyncWorkerErrorsEvaluationPeriods"
+        },
+        "Threshold": {
+          "Ref": "ResyncWorkerErrorsThreshold"
+        },
         "ComparisonOperator": "GreaterThanThreshold",
         "TreatMissingData": "notBreaching",
         "AlarmActions": {
@@ -1083,9 +1250,15 @@
           }
         ],
         "Statistic": "Sum",
-        "Period": 300,
-        "EvaluationPeriods": 1,
-        "Threshold": 0,
+        "Period": {
+          "Ref": "AlarmPeriodSeconds"
+        },
+        "EvaluationPeriods": {
+          "Ref": "ResyncScheduleFailedInvocationsEvaluationPeriods"
+        },
+        "Threshold": {
+          "Ref": "ResyncScheduleFailedInvocationsThreshold"
+        },
         "ComparisonOperator": "GreaterThanThreshold",
         "TreatMissingData": "notBreaching",
         "AlarmActions": {
