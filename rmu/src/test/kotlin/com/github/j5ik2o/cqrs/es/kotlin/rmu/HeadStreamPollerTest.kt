@@ -2,8 +2,10 @@ package com.github.j5ik2o.cqrs.es.kotlin.rmu
 
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import software.amazon.awssdk.services.dynamodb.model.ExpiredIteratorException
 import software.amazon.awssdk.services.dynamodb.model.Record
 import software.amazon.awssdk.services.dynamodb.model.StreamRecord
+import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException
 import kotlin.test.assertEquals
 
 class HeadStreamPollerTest {
@@ -140,6 +142,54 @@ class HeadStreamPollerTest {
         assertEquals(listOf("1", "2", "3"), handled)
     }
 
+    @Test
+    fun `resumes an expired iterator after the last sequence number`() {
+        val client =
+            FakeHeadStreamClient(
+                shardPages = listOf(ShardPage(listOf("shard-1"), null)),
+                pagesByIterator =
+                    mapOf(
+                        "trim-shard-1" to page(listOf(record("1")), "iterator-1"),
+                        "after-shard-1-1" to page(listOf(record("2")), null),
+                    ),
+                failuresByIterator =
+                    mapOf(
+                        "iterator-1" to
+                            ExpiredIteratorException.builder().message("expired").build(),
+                    ),
+            )
+        val handled = mutableListOf<String>()
+        val poller = newPoller(client, handled)
+
+        val processed = poller.pollOnce("head")
+
+        assertEquals(2, processed)
+        assertEquals(listOf("1", "2"), handled)
+        assertEquals(listOf("shard-1" to "1"), client.afterSequenceRequests)
+    }
+
+    @Test
+    fun `signals a full resync when the stream was trimmed`() {
+        val client =
+            FakeHeadStreamClient(
+                shardPages = listOf(ShardPage(listOf("shard-1"), null)),
+                pagesByIterator =
+                    mapOf("trim-shard-1" to page(listOf(record("1")), "iterator-1")),
+                failuresByIterator =
+                    mapOf(
+                        "iterator-1" to
+                            TrimmedDataAccessException.builder().message("trimmed").build(),
+                    ),
+            )
+        val handled = mutableListOf<String>()
+        val poller = newPoller(client, handled)
+
+        val failure = assertThrows<StreamTrimmedException> { poller.pollOnce("head") }
+
+        assertEquals("shard-1", failure.shardId)
+        assertEquals(listOf("1"), handled)
+    }
+
     private fun newPoller(
         client: HeadStreamClient,
         handled: MutableList<String>,
@@ -160,6 +210,7 @@ class HeadStreamPollerTest {
     private class FakeHeadStreamClient(
         private val shardPages: List<ShardPage>,
         private val pagesByIterator: Map<String, StreamRecordPage>,
+        private val failuresByIterator: Map<String, RuntimeException> = emptyMap(),
     ) : HeadStreamClient {
         var describeShardsCalls = 0
         var getRecordsCalls = 0
@@ -188,6 +239,7 @@ class HeadStreamPollerTest {
         ): StreamRecordPage {
             getRecordsCalls++
             iteratorsRequested.add(shardIterator)
+            failuresByIterator[shardIterator]?.let { throw it }
             return pagesByIterator[shardIterator]
                 ?: throw IllegalStateException("unexpected iterator $shardIterator")
         }

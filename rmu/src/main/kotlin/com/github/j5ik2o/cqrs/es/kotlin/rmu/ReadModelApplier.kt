@@ -6,6 +6,7 @@ import com.github.j5ik2o.cqrs.es.kotlin.domain.groupchat.GroupChatId
 import com.github.j5ik2o.cqrs.es.kotlin.domain.groupchat.Member
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
+import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.Instant
 
@@ -22,33 +23,32 @@ class ReadModelApplier(
     private val journalReader: JournalReader,
     private val eventSerializer: GroupChatEventSerializer = GroupChatEventSerializer(),
     private val readAheadEvents: Int = 100,
-) {
-    fun position(aggregateId: String): Long =
+) : EventApplier {
+    override fun position(aggregateId: String): Long =
         jdbcTemplate
             .query(SELECT_POSITION, { rs, _ -> rs.getLong(1) }, aggregateId)
             .firstOrNull() ?: 0L
 
-    fun applyHeadEvent(
+    override fun applyHeadEvent(
         aggregateId: String,
         event: HeadEvent,
     ) {
-        val groupChatId = parseAggregateId(aggregateId)
         val current = position(aggregateId)
         if (event.seqNr <= current) {
             return
         }
         if (event.seqNr > current + 1) {
-            applyThrough(aggregateId, groupChatId, event.seqNr - 1)
+            applyThrough(aggregateId, event.seqNr - 1)
         }
-        applyEvent(aggregateId, groupChatId, event)
+        applyEvent(aggregateId, parseAggregateId(aggregateId), event)
     }
 
-    private fun applyThrough(
+    override fun applyThrough(
         aggregateId: String,
-        groupChatId: GroupChatId,
         targetSeqNr: Long,
     ) {
         if (targetSeqNr <= 0) return
+        val groupChatId = parseAggregateId(aggregateId)
         var current = position(aggregateId)
         while (current < targetSeqNr) {
             val from = current + 1
@@ -73,6 +73,26 @@ class ReadModelApplier(
         groupChatId: GroupChatId,
         event: HeadEvent,
     ) {
+        var attempt = 1
+        while (true) {
+            try {
+                applyEventInTransaction(aggregateId, groupChatId, event)
+                return
+            } catch (e: RuntimeException) {
+                if (attempt >= MAX_TRANSACTION_ATTEMPTS || !isTransactionConflict(e)) {
+                    throw e
+                }
+                sleepQuietly(5L * attempt)
+                attempt++
+            }
+        }
+    }
+
+    private fun applyEventInTransaction(
+        aggregateId: String,
+        groupChatId: GroupChatId,
+        event: HeadEvent,
+    ) {
         transactionTemplate.executeWithoutResult {
             jdbcTemplate.update(
                 INSERT_POSITION_IF_ABSENT,
@@ -87,7 +107,8 @@ class ReadModelApplier(
                 return@executeWithoutResult
             }
             if (event.seqNr != current + 1) {
-                throw ReadModelUpdateException(
+                throw PermanentFailure(
+                    FailureKind.JOURNAL_GAP,
                     "expected seq_nr ${current + 1} but got ${event.seqNr}",
                 )
             }
@@ -117,7 +138,12 @@ class ReadModelApplier(
                     timestamp,
                     timestamp,
                 )
-                val administrator = event.members.values.first()
+                val administrator =
+                    event.members.values.firstOrNull()
+                        ?: throw PermanentFailure(
+                            FailureKind.EVENT_PAYLOAD,
+                            "Created event has no members",
+                        )
                 insertMember(groupChatId, administrator, timestamp)
             }
 
@@ -196,13 +222,15 @@ class ReadModelApplier(
     private fun deserialize(event: HeadEvent): GroupChatEvent =
         try {
             eventSerializer.deserialize(event.payload)
-                ?: throw ReadModelUpdateException(
+                ?: throw PermanentFailure(
+                    FailureKind.EVENT_PAYLOAD,
                     "failed to deserialize event with seq_nr ${event.seqNr}",
                 )
-        } catch (e: ReadModelUpdateException) {
+        } catch (e: PermanentFailure) {
             throw e
         } catch (e: Exception) {
-            throw ReadModelUpdateException(
+            throw PermanentFailure(
+                FailureKind.EVENT_PAYLOAD,
                 "failed to deserialize event with seq_nr ${event.seqNr}",
                 e,
             )
@@ -212,7 +240,11 @@ class ReadModelApplier(
         try {
             GroupChatId.ofString(aggregateId)
         } catch (e: RuntimeException) {
-            throw ReadModelUpdateException("invalid aggregate id $aggregateId", e)
+            throw PermanentFailure(
+                FailureKind.EVENT_PAYLOAD,
+                "invalid aggregate id $aggregateId",
+                e,
+            )
         }
 
     private fun requireContiguous(
@@ -223,20 +255,44 @@ class ReadModelApplier(
         var expected = fromSeqNr
         for (event in events) {
             if (event.seqNr != expected) {
-                throw ReadModelUpdateException(
+                throw PermanentFailure(
+                    FailureKind.JOURNAL_GAP,
                     "journal gap: expected seq_nr $expected but got ${event.seqNr}",
                 )
             }
             expected++
         }
         if (expected != toSeqNr + 1) {
-            throw ReadModelUpdateException(
+            throw PermanentFailure(
+                FailureKind.JOURNAL_GAP,
                 "journal is missing seq_nr $expected..$toSeqNr",
             )
         }
     }
 
+    private fun isTransactionConflict(failure: Throwable): Boolean {
+        var cause: Throwable? = failure
+        while (cause != null) {
+            if (cause is SQLException && (cause.errorCode == 1213 || cause.errorCode == 1205)) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
+    }
+
+    private fun sleepQuietly(millis: Long) {
+        try {
+            Thread.sleep(millis)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw RetryInterruptedException(e)
+        }
+    }
+
     companion object {
+        private const val MAX_TRANSACTION_ATTEMPTS = 5
+
         private const val INSERT_POSITION_IF_ABSENT = """
             INSERT INTO read_model_positions (aggregate_id, seq_nr, updated_at)
             VALUES (?, 0, ?)

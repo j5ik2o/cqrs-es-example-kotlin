@@ -135,8 +135,16 @@ event.
   applied record.
 
 The local RMU starts at `TRIM_HORIZON`, so a restart replays retained records and the positions
-drop what was already applied. A trimmed stream currently stops the poller; the full resync,
-recovery tasks, and dead-letter handling are remaining work.
+drop what was already applied. Transient failures are retried with exponential backoff and jitter.
+A permanent failure, or a retry that exhausts its attempt or elapsed-time budget, is recorded as a
+recovery task in `read_model_recovery_tasks`. The task stores the store id, projection name and
+version, aggregate id, `seq_nr`, failure kind, and error message. Recovery re-reads the position and
+replays the journal in ascending order, so it is idempotent.
+
+The RMU reconciles every head on startup and after a trimmed stream. The scan uses a consistent
+read, skips `__config__` and other aggregate types, and fills any lag between the head `seq_nr` and
+the projection position from the journal. An expired iterator resumes after the last processed
+sequence number. Pending recovery tasks are replayed at startup and periodically afterwards.
 
 ## Local run
 
@@ -233,6 +241,12 @@ The verification covers `createGroupChat`, `addMember`, `postMessage`, `renameGr
 | `STREAM_MAX_ITEM_COUNT` | `32` | Head stream records per read |
 | `STREAM_POLL_BACKOFF_INITIAL_MILLIS` | `500` | RMU idle backoff start |
 | `STREAM_POLL_BACKOFF_MAX_MILLIS` | `30000` | RMU idle backoff cap |
+| `STREAM_RETRY_MAX_ATTEMPTS` | `5` | Retry attempts per event |
+| `STREAM_RETRY_MAX_ELAPSED_MILLIS` | `30000` | Retry elapsed-time budget |
+| `STREAM_RETRY_INITIAL_DELAY_MILLIS` | `200` | Retry initial delay |
+| `STREAM_RETRY_MAX_DELAY_MILLIS` | `5000` | Retry maximum delay |
+| `STREAM_RECOVERY_INTERVAL_MILLIS` | `60000` | Recovery replay interval |
+| `STREAM_MAX_RECOVERY_TASKS_PER_RUN` | `50` | Recovery tasks per run |
 | `GRAPHIQL_ENABLED` | `true` | Enable GraphiQL |
 
 ## Storage layout
@@ -284,9 +298,22 @@ queries filter them out.
   `userAccountId` visibility filter and the `NaiveDateTime` scalar.
 - `HeadRecordParserTest` covers the head stream record parser, including `__config__`, other
   aggregate types, and missing events.
-- `HeadStreamPollerTest` covers shard iteration and iterator reuse.
+- `HeadStreamPollerTest` covers shard iteration, expired iterators, trimmed streams, and the
+  page limit.
 - `ReadModelUpdaterTest` covers the position rule, duplicate and stale events, journal gap
-  filling, and removal and deletion, using MySQL Testcontainers.
+  filling, removal and deletion, concurrent application, concurrent position-row creation, and
+  restart resumption, using MySQL Testcontainers.
+- `RetryPolicyTest` covers the attempt cap, the elapsed-time budget, permanent failures, and
+  exponential backoff with reset.
+- `FailureClassifierTest` covers permanent and retryable failure classification.
+- `DynamoDbHeadScannerTest` covers multi-page scans, `__config__` and other aggregate types, and
+  `store_id`, using LocalStack.
+- `ResyncerTest` covers journal catch-up from the head, recovery tasks for permanent failures, and
+  aborting on a storage failure.
+- `ReadModelUpdaterRecoveryTest` covers retries, recovery tasks after retry exhaustion, the target
+  of a multi-event record, and recovery tasks for parse failures.
+- `RecoveryServiceTest` covers idempotent task recording, journal replay from the current position,
+  completion, and skipping tasks from another store, using MySQL Testcontainers.
 
 ## CI
 
@@ -300,14 +327,13 @@ The test and e2e jobs rely on Docker.
 
 ## Remaining work
 
-The end-to-end stack is in place. The next work is the RMU recovery path:
+The recovery path from the A proposal is in place. The remaining work is:
 
-1. Add the RMU recovery path. Scan the head table on startup, resync after a trimmed stream, and
-   record permanent failures as recovery tasks. Add the `read_model_recovery_tasks` migration when
-   the path is implemented.
-2. Add the Lambda handler and the AWS deployment assets if the common milestone requires them.
-3. Add a persisted stream checkpoint if the 24-hour stream retention is shorter than a normal stop.
-4. Document the final port, table, and environment variable conventions in the hub acceptance
+1. Add the SQS notifier, the Lambda handler, and the AWS deployment assets if the common milestone
+   requires them. SQS stays delivery-only; the event body is still re-read from the journal.
+2. Add an operational procedure for a stop longer than the 24-hour retention window, including the
+   startup full resync and alerts.
+3. Document the final port, table, and environment variable conventions in the hub acceptance
    criteria.
 
 ## License

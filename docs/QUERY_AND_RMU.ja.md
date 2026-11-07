@@ -60,15 +60,23 @@ RMU は head テーブルの DynamoDB Streams を購読します。head テー�
 
 `read_model_positions` の行を先に用意するのは、存在しない行に対する `SELECT ... FOR UPDATE` がギャップロックを取り、同時に新しい集約を処理する 2 つの RMU がデッドロックするのを避けるためです。
 
+### 復旧（A 案）
+
+RMU は M2 の復旧 A 案に合わせて、再試行、永続復旧タスク、再同期を実装しています。
+
+- 再試行: `RetryPolicy` が回数上限と最大経過時間を守り、指数バックオフとフルジッターで待ちます。恒久的な失敗（payload、journal の欠番、MySQL の制約違反）は再試行せず、復旧タスクにします。
+- 永続復旧タスク: `read_model_recovery_tasks` にストア ID、投影名と版、集約 ID、seq_nr、失敗種別、エラーを記録します。タスクは識別子だけを持ち、イベント本文は journal から読み直します。復旧は位置を読み直してから journal を昇順に適用し、対象位置に達したことを確認して完了にします。同じタスクを 2 回処理しても結果は変わりません。
+- 再同期（DY-15）: 起動時に head を ConsistentRead で全ページ Scan し、`__config__` と他の集約型を除外します。head の seq_nr と投影位置を比べ、遅れを journal から補います。Streams が切り詰められたときは全件再同期し、イテレータが期限切れになったときはシャードの最後の位置から再開します。
+- 実行: `LocalRmuRunner` は起動時に再同期と保留タスクの復旧を行い、その後は Streams を購読します。24 時間を超えてレコードを読めなかった場合と Streams が切り詰められた場合は、全件再同期してから購読を再開します。保留タスクは 1 分ごとに再試行します。
+- 設定: 再試行の回数・最大経過時間・待機時間、ポーリングのバックオフ、復旧の間隔と 1 回の上限は `app.stream.*` で指定します。
+
 ### ローカル実行
 
-`LocalRmuRunner` は `CommandLineRunner` として動き、`HeadStreamPoller.pollOnce` を繰り返します。レコードがないときは指数バックオフで待ちます。エラーが起きたときもログを出して待ち、次のポーリングを続けます。
-
-現在の実装は、Streams が切り詰められた場合の全件走査による再同期、恒久的な失敗の復旧タスク、DLQ を持ちません。これらは次の段階の作業です。
+`LocalRmuRunner` は `CommandLineRunner` として動き、起動時に再同期と保留タスクの復旧を行い、その後 `HeadStreamPoller.pollOnce` を繰り返します。レコードがないときは指数バックオフで待ちます。エラーが起きたときもログを出して待ち、次のポーリングを続けます。
 
 ## リードモデル
 
-`tools/refinery/migrations` の 2 つのマイグレーションで、次のテーブルを作ります。
+`tools/refinery/migrations` の 3 つのマイグレーションで、次のテーブルを作ります。
 
 | テーブル | キー | 用途 |
 |:--|:--|:--|
@@ -76,6 +84,7 @@ RMU は head テーブルの DynamoDB Streams を購読します。head テー�
 | `members` | `id`、一意キー `(group_chat_id, user_account_id)` | メンバーとロール |
 | `messages` | `id` | メッセージと `disabled` フラグ |
 | `read_model_positions` | `aggregate_id` | 集約ごとの最後の `seq_nr` |
+| `read_model_recovery_tasks` | `(store_id, projection_name, aggregate_id, seq_nr)` | 未適用イベントの復旧タスク |
 
 グループチャット名の列は、ドメインの上限に合わせて `varchar(255)` にしました。Java 版の v5 マイグレーションは `varchar(64)` です。
 
@@ -83,9 +92,19 @@ RMU は head テーブルの DynamoDB Streams を購読します。head テー�
 
 - `ReadApiResolverTest` は MySQL の Testcontainers に対して 6 つの Query を実行し、`userAccountId` の絞り込み、404 のエラー、`NaiveDateTime` の形式を確認します。
 - `HeadRecordParserTest` は `__config__`、他の集約型、`REMOVE`、events の欠落を確認します。
-- `HeadStreamPollerTest` はシャードの読み取りとイテレータの再利用を確認します。
-- `ReadModelUpdaterTest` は位置の前進、重複と古いイベントの破棄、journal からの補完、削除、位置を進めない失敗を確認します。
+- `HeadStreamPollerTest` はシャードの読み取り、イテレータの期限切れ、切り詰めの検出、ページ上限を確認します。
+- `ReadModelUpdaterTest` は位置の前進、重複と古いイベントの破棄、journal からの補完、削除、同時適用、位置行の同時作成、再起動後の再開を確認します。
+- `RetryPolicyTest` は再試行の回数上限、経過時間の上限、恒久的な失敗の非再試行、指数バックオフとリセットを確認します。
+- `FailureClassifierTest` は恒久的な失敗と再試行可能な失敗の分類を確認します。
+- `DynamoDbHeadScannerTest` は LocalStack で複数ページの Scan、`__config__` と他の集約型の除外、store_id の取得を確認します。
+- `ResyncerTest` は head と位置の差の journal 補完、恒久的な失敗の復旧タスク、ストレージ障害での中断を確認します。
+- `ReadModelUpdaterRecoveryTest` は再試行、再試行上限後の復旧タスク、複数イベントの復旧対象、解析失敗の復旧タスクを確認します。
+- `RecoveryServiceTest` は復旧タスクの冪等な記録、位置を読み直す復旧、完了の確認、他ストアのタスクの除外を確認します。
 
 ## 残作業
 
-Write、RMU、Read をまとめて動かす compose と e2e の検証スクリプトを追加します。RMU には、起動時の head 全件走査、Streams の切り詰め後の再同期、恒久的な失敗の復旧タスク、DLQ を追加します。Lambda 版が必要なら、ハンドラと AWS のデプロイ資産も追加します。
+復旧 A 案の実装は入りました。残りは次のとおりです。
+
+1. SQS の notifier と Lambda ハンドラ、AWS のデプロイ資産を追加します。SQS は配送専用とし、イベント本文は journal から読み直す方針を保ちます。
+2. 24 時間を超える停止に備えた運用手順（起動時の全件再同期、アラート）を整えます。
+3. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。

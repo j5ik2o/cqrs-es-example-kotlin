@@ -12,51 +12,64 @@ import java.time.Instant
  */
 object HeadRecordParser {
     const val CONFIG_AGGREGATE_ID = "__config__"
-    private const val GROUP_CHAT_ID_PREFIX = "GroupChat-"
 
     fun parse(record: Record): HeadRecord? {
         val eventName = record.eventNameAsString()
         if (eventName == "REMOVE") return null
         if (eventName != "INSERT" && eventName != "MODIFY") {
-            throw IllegalArgumentException("unexpected stream event name: $eventName")
+            throw permanent("unexpected stream event name: $eventName")
         }
         val image =
             record.dynamodb()?.newImage()
-                ?: throw IllegalArgumentException("head record has no new image")
+                ?: throw permanent("head record has no new image")
         val aggregateId =
             image["aid"]?.s()
-                ?: throw IllegalArgumentException("head record has no aid")
+                ?: throw permanent("head record has no aid")
         if (aggregateId == CONFIG_AGGREGATE_ID) return null
-        if (!aggregateId.startsWith(GROUP_CHAT_ID_PREFIX)) return null
+        if (!AggregateType.isGroupChat(aggregateId)) return null
 
         val eventsAttribute =
             image["events"]
-                ?: throw IllegalArgumentException("head record has no events")
+                ?: throw permanent("head record has no events")
         val events =
             eventsAttribute
                 .l()
                 .map { parseEvent(it) }
                 .sortedBy { it.seqNr }
         if (events.isEmpty()) {
-            throw IllegalArgumentException("head record has no events")
+            throw permanent("head record has no events")
         }
         return HeadRecord(aggregateId, events)
+    }
+
+    /**
+     * Reads only the identifiers needed to record a recovery task when the full parse failed.
+     * Returns null for the configuration item and other aggregate types.
+     */
+    fun fallbackIdentity(record: Record): HeadIdentity? {
+        val image = record.dynamodb()?.newImage() ?: return null
+        val aggregateId = image["aid"]?.s() ?: return null
+        if (aggregateId == CONFIG_AGGREGATE_ID || !AggregateType.isGroupChat(aggregateId)) {
+            return null
+        }
+        val seqNr = image["seq_nr"]?.n()?.toLong() ?: return null
+        return HeadIdentity(aggregateId, seqNr)
     }
 
     private fun parseEvent(attribute: AttributeValue): HeadEvent {
         val fields =
             attribute.m()
-                ?: throw IllegalArgumentException("head event is not a map")
+                ?: throw permanent("head event is not a map")
         val seqNr =
             fields["seq_nr"]?.n()?.toLong()
-                ?: throw IllegalArgumentException("head event has no seq_nr")
+                ?: throw permanent("head event has no seq_nr")
         val occurredAtNanos =
             fields["occurred_at"]?.n()?.toLong()
-                ?: throw IllegalArgumentException("head event has no occurred_at")
+                ?: throw permanent("head event has no occurred_at")
         val manifest = fields["manifest"]?.s() ?: ""
         val payload =
             fields["payload"]?.let { payloadBytes(it) }
-                ?: throw IllegalArgumentException("head event has no payload")
+                ?: throw permanent("head event has no payload")
         return HeadEvent(
             seqNr = seqNr,
             occurredAt = Instant.ofEpochSecond(0, occurredAtNanos),
@@ -66,4 +79,11 @@ object HeadRecordParser {
     }
 
     private fun payloadBytes(attribute: AttributeValue): ByteArray? = attribute.b()?.asByteArray() ?: attribute.s()?.toByteArray()
+
+    private fun permanent(message: String): PermanentFailure = PermanentFailure(FailureKind.EVENT_PAYLOAD, message)
 }
+
+data class HeadIdentity(
+    val aggregateId: String,
+    val headSeqNr: Long,
+)

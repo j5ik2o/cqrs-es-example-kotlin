@@ -2,14 +2,17 @@ package com.github.j5ik2o.cqrs.es.kotlin.rmu
 
 import software.amazon.awssdk.services.dynamodb.model.ExpiredIteratorException
 import software.amazon.awssdk.services.dynamodb.model.Record
+import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException
+import java.time.Instant
 
 /**
  * Polls every shard of the head table's stream.
  *
  * The first iterator starts at `TRIM_HORIZON`, so a restart replays the retained records and the
  * read model positions drop what was already applied. An expired iterator resumes after the last
- * processed sequence number. When a handler fails, the shard iterator is reset to the last
- * successfully processed record so the failed record is retried on the next poll.
+ * processed sequence number. A trimmed shard raises [StreamTrimmedException] so the caller runs a
+ * full resync. When a handler fails, the shard iterator is reset to the last successfully processed
+ * record so the failed record is retried on the next poll.
  */
 class HeadStreamPoller(
     private val client: HeadStreamClient,
@@ -20,6 +23,9 @@ class HeadStreamPoller(
     private val iterators = mutableMapOf<String, String>()
     private val lastSequenceNumbers = mutableMapOf<String, String>()
     private val completedShards = mutableSetOf<String>()
+
+    @Volatile
+    private var lastRecordTime: Instant? = null
 
     @Synchronized
     fun pollOnce(headTableName: String): Int {
@@ -32,8 +38,7 @@ class HeadStreamPoller(
                 if (completedShards.contains(shardId)) {
                     continue
                 }
-                var iterator =
-                    iterators[shardId] ?: client.shardIteratorAtTrimHorizon(streamArn, shardId)
+                var iterator = iterators[shardId] ?: trimHorizonIterator(streamArn, shardId)
                 var pages = 0
                 while (true) {
                     val page =
@@ -42,6 +47,8 @@ class HeadStreamPoller(
                         } catch (e: ExpiredIteratorException) {
                             iterator = nextIteratorAfterLastSequence(streamArn, shardId)
                             continue
+                        } catch (e: TrimmedDataAccessException) {
+                            throw StreamTrimmedException(shardId, e)
                         }
                     for (record in page.records) {
                         try {
@@ -54,6 +61,9 @@ class HeadStreamPoller(
                         }
                         lastSequenceNumbers[shardId] = record.dynamodb().sequenceNumber()
                         processed++
+                    }
+                    if (page.records.isNotEmpty()) {
+                        lastRecordTime = Instant.now()
                     }
                     val nextIterator = page.nextShardIterator
                     if (nextIterator == null) {
@@ -79,7 +89,11 @@ class HeadStreamPoller(
         iterators.clear()
         lastSequenceNumbers.clear()
         completedShards.clear()
+        lastRecordTime = null
     }
+
+    /** The time the last record was read, or null when no record has been read yet. */
+    fun lastRecordTime(): Instant? = lastRecordTime
 
     private fun nextIteratorAfterLastSequence(
         streamArn: String,
@@ -87,9 +101,23 @@ class HeadStreamPoller(
     ): String {
         val lastSequenceNumber = lastSequenceNumbers[shardId]
         return if (lastSequenceNumber == null) {
-            client.shardIteratorAtTrimHorizon(streamArn, shardId)
+            trimHorizonIterator(streamArn, shardId)
         } else {
-            client.shardIteratorAfterSequenceNumber(streamArn, shardId, lastSequenceNumber)
+            try {
+                client.shardIteratorAfterSequenceNumber(streamArn, shardId, lastSequenceNumber)
+            } catch (e: TrimmedDataAccessException) {
+                throw StreamTrimmedException(shardId, e)
+            }
         }
     }
+
+    private fun trimHorizonIterator(
+        streamArn: String,
+        shardId: String,
+    ): String =
+        try {
+            client.shardIteratorAtTrimHorizon(streamArn, shardId)
+        } catch (e: TrimmedDataAccessException) {
+            throw StreamTrimmedException(shardId, e)
+        }
 }

@@ -23,6 +23,9 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
 import java.time.LocalDateTime
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -137,6 +140,84 @@ class ReadModelUpdaterTest {
 
         assertEquals(0L, applier.position(fixture.aggregateId.asString()))
         assertEquals(0, countMembers(fixture.aggregateId))
+    }
+
+    @Test
+    fun `applies the same events concurrently exactly once`() {
+        val fixture = newFixture()
+        val applier = newApplier()
+
+        runConcurrently(2) {
+            fixture.headEvents.take(3).forEach { event ->
+                applier.applyHeadEvent(fixture.aggregateId.asString(), event)
+            }
+        }
+
+        assertEquals(3L, applier.position(fixture.aggregateId.asString()))
+        assertEquals(1, countGroupChats(fixture.aggregateId))
+        assertEquals(2, countMembers(fixture.aggregateId))
+        assertEquals(0, countMessages(fixture.aggregateId))
+    }
+
+    @Test
+    fun `creates position rows for different aggregates concurrently`() {
+        val first = newFixture()
+        val second = newFixture()
+        val applier = newApplier()
+
+        runConcurrently(2) { index ->
+            val fixture = if (index == 0) first else second
+            applier.applyHeadEvent(fixture.aggregateId.asString(), fixture.headEvents[0])
+        }
+
+        assertEquals(1L, applier.position(first.aggregateId.asString()))
+        assertEquals(1L, applier.position(second.aggregateId.asString()))
+        assertEquals(2, countGroupChats(first.aggregateId, second.aggregateId))
+    }
+
+    @Test
+    fun `resumes after a restart from the persisted position`() {
+        val fixture = newFixture()
+        val first = newApplier()
+        first.applyHeadEvent(fixture.aggregateId.asString(), fixture.headEvents[0])
+        first.applyHeadEvent(fixture.aggregateId.asString(), fixture.headEvents[1])
+
+        val second = newApplier()
+        second.applyHeadEvent(fixture.aggregateId.asString(), fixture.headEvents[2])
+
+        assertEquals(3L, second.position(fixture.aggregateId.asString()))
+        assertEquals(2, countMembers(fixture.aggregateId))
+    }
+
+    private fun runConcurrently(
+        threads: Int,
+        operation: (Int) -> Unit,
+    ) {
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(threads)
+        try {
+            val futures =
+                (0 until threads).map { index ->
+                    executor.submit {
+                        start.await()
+                        operation(index)
+                    }
+                }
+            start.countDown()
+            futures.forEach { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private fun countGroupChats(vararg aggregateIds: GroupChatId): Int {
+        val placeholders = aggregateIds.joinToString(",") { "?" }
+        val args = aggregateIds.map { it.asString() }.toTypedArray()
+        return jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM group_chats WHERE id IN ($placeholders)",
+            Int::class.java,
+            *args,
+        ) ?: 0
     }
 
     private fun newApplier(): ReadModelApplier = ReadModelApplier(jdbcTemplate, transactionTemplate, FakeJournalReader(emptyMap()))

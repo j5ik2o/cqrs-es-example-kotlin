@@ -101,7 +101,9 @@ RMU は head テーブルの DynamoDB Streams を購読します。`INSERT` と 
 - `SELECT ... FOR UPDATE` で位置の行をロックするため、同時に動く RMU が同じイベントを二重に適用したり、飛ばしたりしません。
 - イベントの適用に失敗したときは位置を進めません。ポーラは最後に成功したレコードの次から再開します。
 
-ローカルの RMU は `TRIM_HORIZON` から読み始めるため、再起動すると保持されているレコードを読み直します。適用済みのイベントは位置で捨てます。Streams が切り詰められた場合はポーラが止まります。head の全件走査による再同期、復旧タスク、DLQ は残作業です。
+ローカルの RMU は `TRIM_HORIZON` から読み始めるため、再起動すると保持されているレコードを読み直します。適用済みのイベントは位置で捨てます。一時的な失敗は指数バックオフとジッターで再試行します。恒久的な失敗、または回数上限・経過時間の上限に達した再試行は、`read_model_recovery_tasks` に復旧タスクとして記録します。タスクにはストア ID、投影名と版、集約 ID、`seq_nr`、失敗種別、エラーを保存します。復旧は位置を読み直してから journal を昇順に適用するため、同じタスクを 2 回処理しても結果は変わりません。
+
+RMU は起動時と Streams の切り詰め後に、head を全件照合します。Scan は ConsistentRead を使い、`__config__` と他の集約型を除外します。head の `seq_nr` と投影位置の差は journal から補います。イテレータが期限切れになったときは、最後に処理したシーケンス番号の次から再開します。保留中の復旧タスクは起動時とその後定期的に再試行します。
 
 ## ローカルで動かす
 
@@ -191,6 +193,12 @@ e2e のスクリプトは、アプリのイメージと e2e のイメージを�
 | `STREAM_MAX_ITEM_COUNT` | `32` | head Streams から 1 回に読む件数 |
 | `STREAM_POLL_BACKOFF_INITIAL_MILLIS` | `500` | RMU の待機時間の初期値 |
 | `STREAM_POLL_BACKOFF_MAX_MILLIS` | `30000` | RMU の待機時間の上限 |
+| `STREAM_RETRY_MAX_ATTEMPTS` | `5` | イベントごとの再試行回数 |
+| `STREAM_RETRY_MAX_ELAPSED_MILLIS` | `30000` | 再試行の経過時間の上限 |
+| `STREAM_RETRY_INITIAL_DELAY_MILLIS` | `200` | 再試行の待機時間の初期値 |
+| `STREAM_RETRY_MAX_DELAY_MILLIS` | `5000` | 再試行の待機時間の上限 |
+| `STREAM_RECOVERY_INTERVAL_MILLIS` | `60000` | 復旧タスクの再試行間隔 |
+| `STREAM_MAX_RECOVERY_TASKS_PER_RUN` | `50` | 1 回に処理する復旧タスクの上限 |
 | `GRAPHIQL_ENABLED` | `true` | GraphiQL を有効にするか |
 
 ## 保存形式
@@ -230,8 +238,14 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 - `GroupChatMutationResolverTest` は GraphQL のスキーマを通して 8 つの Mutation と `healthCheck` を実行します。認可エラーと不正な ID が GraphQL エラーになることも確認します。
 - `ReadApiResolverTest` は MySQL の Testcontainers に対して 6 つの Query を実行し、`userAccountId` による閲覧範囲の絞り込みと `NaiveDateTime` スカラーを確認します。
 - `HeadRecordParserTest` は head Streams のレコードを解析します。`__config__`、他の集約型、events の欠落を確認します。
-- `HeadStreamPollerTest` はシャードの読み取りとイテレータの再利用を確認します。
-- `ReadModelUpdaterTest` は位置のルール、重複と古いイベント、journal からの補完、削除を MySQL の Testcontainers で確認します。
+- `HeadStreamPollerTest` はシャードの読み取り、イテレータの期限切れ、切り詰めの検出、ページ上限を確認します。
+- `ReadModelUpdaterTest` は位置のルール、重複と古いイベント、journal からの補完、削除、同時適用、位置行の同時作成、再起動後の再開を MySQL の Testcontainers で確認します。
+- `RetryPolicyTest` は再試行の回数上限、経過時間の上限、恒久的な失敗の非再試行、指数バックオフとリセットを確認します。
+- `FailureClassifierTest` は恒久的な失敗と再試行可能な失敗の分類を確認します。
+- `DynamoDbHeadScannerTest` は LocalStack で複数ページの Scan、`__config__` と他の集約型の除外、`store_id` の取得を確認します。
+- `ResyncerTest` は head と位置の差の journal 補完、恒久的な失敗の復旧タスク、ストレージ障害での中断を確認します。
+- `ReadModelUpdaterRecoveryTest` は再試行、再試行上限後の復旧タスク、複数イベントの復旧対象、解析失敗の復旧タスクを確認します。
+- `RecoveryServiceTest` は復旧タスクの冪等な記録、位置を読み直す復旧、完了の確認、他ストアのタスクの除外を MySQL の Testcontainers で確認します。
 
 ## CI
 
@@ -245,12 +259,11 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 
 ## 残作業
 
-e2e の構成は入りました。次は RMU の復旧処理です。
+復旧 A 案の実装は入りました。残りは次のとおりです。
 
-1. RMU の復旧処理を追加します。起動時に head を全件走査し、Streams が切り詰められたときに再同期し、恒久的な失敗を復旧タスクとして記録します。復旧処理を実装するときに `read_model_recovery_tasks` のマイグレーションを追加します。
-2. 共通のマイルストーンで必要なら、Lambda ハンドラと AWS のデプロイ資産を追加します。
-3. 24 時間の Streams 保持期間より長く止まる場合に備え、処理位置の永続化を検討します。
-4. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。
+1. SQS の notifier、Lambda ハンドラ、AWS のデプロイ資産を、共通のマイルストーンで必要なら追加します。SQS は配送専用とし、イベント本文は journal から読み直す方針を保ちます。
+2. 24 時間を超える停止に備えた運用手順（起動時の全件再同期、アラート）を整えます。
+3. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。
 
 ## Java 版との対応
 
@@ -258,7 +271,7 @@ e2e の構成は入りました。次は RMU の復旧処理です。
 - Write API と Read API のスキーマは Java 版の `graphql-write/schema.graphqls` と `graphql-read/schema.graphqls` に合わせています。Read API の型名は `GroupChat`、`Member`、`Message`、時刻は `NaiveDateTime` です。
 - イベントの manifest と 3 テーブルの構成は Java 版の v5 実装に合わせています。
 - Read API の DAO は、Java 版の MyBatis ではなく Spring の `JdbcTemplate` を使います。
-- RMU は Java 版の Lambda ハンドラ、復旧タスク、再同期を含みません。AWS SDK で head Streams を直接読み、位置のルールと journal からの補完を実装しています。
+- RMU は復旧タスクと再同期を含みます。Lambda ハンドラと SQS の notifier は含みません。AWS SDK で head Streams と journal を直接読みます。
 - Kotlin の命名規則に合わせて、パッケージ名は `interfaceadaptor` にしました。ディレクトリ名は Java 版に合わせて `interface-adaptor-*` のままです。ktlint の `package-name` ルールがアンダースコアを許可しないためです。
 - Write API のポートは 56080、Read API のポートは 56082 です。68080 は 65535 を超えるため使えません。
 - e2e の compose と検証スクリプトは Java 版の構成に合わせています。README は既存の英語版と日本語版の両方を更新しました。
