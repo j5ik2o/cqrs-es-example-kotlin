@@ -11,14 +11,20 @@ import java.time.Instant
 /**
  * The local read model updater.
  *
- * It reconciles every head on startup, then follows the head Streams. A trimmed stream, or a reader
- * that has been stopped longer than the 24-hour retention window, triggers another full resync
- * (DY-15). Pending recovery tasks are replayed at startup and periodically afterwards.
+ * It resumes the head Streams subscription first, then reconciles every head in parallel with the
+ * subscription (DY-15). A trimmed stream, or a reader that has been stopped longer than the 24-hour
+ * retention window, triggers another full resync. Pending recovery tasks are replayed at startup and
+ * periodically afterwards.
+ *
+ * Order matters. The old order completed the scan before polling, so an update written after the
+ * scan had read its head, but before polling began, could leave the 24-hour stream retention before
+ * any iterator existed. Resuming the subscription first keeps every record written from then on
+ * readable while the scan runs.
  */
 @Component
 @Profile("local-rmu")
 class LocalRmuRunner(
-    private val poller: HeadStreamPoller,
+    private val subscription: StreamSubscription,
     private val resyncer: Resyncer,
     private val recoveryService: RecoveryService,
     private val retryPolicy: RetryPolicy,
@@ -34,73 +40,92 @@ class LocalRmuRunner(
 
     override fun run(vararg args: String) {
         logger.info("Starting the local read model updater: headTableName={}", headTableName)
+        try {
+            if (!reconcileStartup()) return
+            recoverPending()
+            var nextRecoveryAt = Instant.now().plusMillis(recoveryIntervalMillis)
 
-        // The first start has no positions at all, and a restart may follow a stop longer than the
-        // stream retention window. Reconcile every head before consuming the stream; the stream
-        // then covers the gap between the scan and the first read. Do not start polling until the
-        // baseline scan completes.
-        while (!Thread.currentThread().isInterrupted) {
-            if (resync("initial reconciliation")) break
-            sleep(backoff.next())
-        }
-        recoverPending()
-        var nextRecoveryAt = Instant.now().plusMillis(recoveryIntervalMillis)
+            while (!Thread.currentThread().isInterrupted) {
+                try {
+                    if (handleResyncRequest()) continue
 
-        while (!Thread.currentThread().isInterrupted) {
-            try {
-                val lastRecordTime = poller.lastRecordTime()
-                if (shouldResync(lastRecordTime, lastSuccessfulResyncAt, Instant.now())) {
-                    logger.warn(
-                        "The reader has not reconciled or read a record for longer than the stream retention window; running a full resync",
-                    )
-                    if (!resync("resync after the retention window")) {
-                        sleep(backoff.next())
+                    val lastRecordTime = subscription.lastRecordTime()
+                    if (shouldResync(lastRecordTime, lastSuccessfulResyncAt, Instant.now())) {
+                        logger.warn(
+                            "The reader has not reconciled or read a record for longer than the stream retention window; running a full resync",
+                        )
+                        if (!resync("resync after the retention window")) {
+                            sleep(backoff.next())
+                            continue
+                        }
+                        subscription.reset()
+                        backoff.reset()
                         continue
                     }
-                    poller.reset()
-                    backoff.reset()
-                }
 
-                val processed = poller.pollOnce(headTableName)
-                if (processed > 0) {
-                    backoff.reset()
-                } else {
+                    if (Instant.now().isAfter(nextRecoveryAt)) {
+                        recoverPending()
+                        nextRecoveryAt = Instant.now().plusMillis(recoveryIntervalMillis)
+                    }
+
+                    sleep(MONITOR_INTERVAL)
+                } catch (e: RetryInterruptedException) {
+                    throw e
+                } catch (e: RuntimeException) {
+                    logger.warn(
+                        "An error has occurred, but reconciliation is restarted. If this error persists, the read model condition may be incorrect.",
+                        e,
+                    )
                     sleep(backoff.next())
                 }
-
-                if (Instant.now().isAfter(nextRecoveryAt)) {
-                    recoverPending()
-                    nextRecoveryAt = Instant.now().plusMillis(recoveryIntervalMillis)
-                }
-            } catch (e: StreamTrimmedException) {
-                logger.warn(
-                    "The reader fell behind the stream retention window; running a full resync: shardId={}",
-                    e.shardId,
-                    e,
-                )
-                if (!resync("resync after trimmed stream")) {
-                    sleep(backoff.next())
-                    continue
-                }
-                poller.reset()
-                backoff.reset()
-            } catch (e: RetryInterruptedException) {
-                throw e
-            } catch (e: Exception) {
-                logger.warn(
-                    "An error has occurred, but stream processing is restarted. If this error persists, the read model condition may be incorrect.",
-                    e,
-                )
-                sleep(backoff.next())
             }
+        } finally {
+            // Stop the subscription last, so an interrupted scan also stops polling.
+            subscription.stop()
         }
+    }
+
+    /**
+     * Resumes the stream subscription, then scans until one reconciliation completes.
+     *
+     * The scan and the subscription run concurrently. An update written while the scan visits the
+     * other aggregates is applied by the subscription; an update the scan has not reached yet is
+     * seen at its new position. Both paths use the same position guard and transaction, so the
+     * overlap is applied once.
+     */
+    internal fun reconcileStartup(): Boolean {
+        subscription.start()
+        while (!Thread.currentThread().isInterrupted) {
+            if (resync("initial reconciliation")) return true
+            sleep(backoff.next())
+        }
+        return false
+    }
+
+    /**
+     * Runs the resync the subscription asked for, if any. It clears the request before the scan:
+     * a trim that arrives while the scan runs raises it again, so its gap is not dropped when the
+     * scan finishes. A failed attempt raises it again instead of waiting for the retention window.
+     */
+    internal fun handleResyncRequest(): Boolean {
+        if (!subscription.isResyncRequested()) return false
+        logger.warn("The stream was trimmed; running a full resync")
+        subscription.clearResyncRequest()
+        if (!resync("resync after trimmed stream")) {
+            subscription.requestResync()
+            sleep(backoff.next())
+            return true
+        }
+        subscription.reset()
+        backoff.reset()
+        return true
     }
 
     private fun resync(label: String): Boolean =
         try {
             retryPolicy.run { resyncer.resync() }
             // The resync scans the current head table, so it also becomes the baseline for the
-            // next retention check. This covers a reader that never completed a stream page.
+            // next retention check. This covers a reader that never read a stream record.
             lastSuccessfulResyncAt = Instant.now()
             true
         } catch (e: RetryInterruptedException) {
@@ -108,7 +133,7 @@ class LocalRmuRunner(
         } catch (e: RuntimeException) {
             // Permanent per-aggregate failures were already recorded as recovery tasks and logged
             // inside the resyncer. A storage failure leaves the resync incomplete; the caller keeps
-            // retrying it before polling again.
+            // retrying it.
             logger.error("{} did not complete", label, e)
             false
         }
@@ -137,6 +162,7 @@ class LocalRmuRunner(
 
     companion object {
         internal val STREAM_RETENTION: Duration = Duration.ofHours(24)
+        internal val MONITOR_INTERVAL: Duration = Duration.ofSeconds(1)
 
         /**
          * Returns whether the reader should reconcile every head again. The baseline is the

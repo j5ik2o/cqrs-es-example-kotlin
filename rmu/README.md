@@ -7,6 +7,7 @@ read model change and the `read_model_positions` advance commit in the same tran
 
 Transient failures are retried with exponential backoff and jitter. Permanent failures, and retries
 that exhaust their budget, are recorded as recovery tasks in `read_model_recovery_tasks`. Recovery
-re-reads the position and replays the journal in order, so it is idempotent. The RMU reconciles every
-head on startup and after a trimmed stream (DY-15), and it records the store, projection, aggregate,
-sequence number, and failure kind with each task.
+re-reads the position and replays the journal in order, so it is idempotent. The RMU resumes the head
+stream subscription before it reconciles every head on startup, then scans while the subscription
+keeps applying records (DY-15). A trimmed stream triggers another resync. Each task records the
+store, projection, aggregate, sequence number, and failure kind.

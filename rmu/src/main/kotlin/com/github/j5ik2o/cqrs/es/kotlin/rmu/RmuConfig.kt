@@ -64,7 +64,7 @@ class RmuConfig(
         )
 
     @Bean
-    fun streamPollBackoff(): Backoff =
+    fun resyncBackoff(): Backoff =
         Backoff(
             initial = Duration.ofMillis(pollBackoffInitialMillis),
             max = Duration.ofMillis(pollBackoffMaxMillis),
@@ -137,6 +137,17 @@ class RmuConfig(
             headStreamClient,
             { record -> readModelUpdater.update(record) },
             maxItemCount,
+        )
+
+    @Bean
+    fun streamSubscription(headStreamPoller: HeadStreamPoller): StreamSubscription =
+        HeadStreamSubscription(
+            headStreamPoller,
+            headTableName,
+            Backoff(
+                initial = Duration.ofMillis(pollBackoffInitialMillis),
+                max = Duration.ofMillis(pollBackoffMaxMillis),
+            ),
         )
 
     private fun <B : AwsClientBuilder<B, *>> B.applyClientConfig(): B {

@@ -160,6 +160,35 @@ class ReadModelUpdaterTest {
     }
 
     @Test
+    fun `applies a journal range and head events concurrently exactly once`() {
+        val fixture = newFixture()
+        val journal = FakeJournalReader(mapOf(fixture.aggregateId.asString() to fixture.headEvents))
+        val applier = ReadModelApplier(jdbcTemplate, transactionTemplate, journal)
+
+        runConcurrently(2) { index ->
+            if (index == 0) {
+                applier.applyThrough(fixture.aggregateId.asString(), 5)
+            } else {
+                fixture.headEvents.take(5).forEach {
+                    applier.applyHeadEvent(fixture.aggregateId.asString(), it)
+                }
+            }
+        }
+
+        assertEquals(5L, applier.position(fixture.aggregateId.asString()))
+        assertEquals(1, countGroupChats(fixture.aggregateId))
+        assertEquals(2, countMembers(fixture.aggregateId))
+        assertEquals(1, countMessages(fixture.aggregateId))
+        assertEquals("renamed", groupChatName(fixture.aggregateId))
+        val message =
+            jdbcTemplate.queryForMap(
+                "SELECT text FROM messages WHERE id = ?",
+                fixture.messageId.asString(),
+            )
+        assertEquals("edited", message["text"])
+    }
+
+    @Test
     fun `creates position rows for different aggregates concurrently`() {
         val first = newFixture()
         val second = newFixture()
