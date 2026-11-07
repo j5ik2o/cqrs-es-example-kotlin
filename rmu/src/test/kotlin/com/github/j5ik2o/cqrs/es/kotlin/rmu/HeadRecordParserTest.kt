@@ -77,7 +77,7 @@ class HeadRecordParserTest {
                         ).build(),
                 ).build()
 
-        assertThrows<IllegalArgumentException> { HeadRecordParser.parse(record) }
+        assertThrows<PermanentFailure> { HeadRecordParser.parse(record) }
     }
 
     @Test
@@ -108,7 +108,7 @@ class HeadRecordParserTest {
                         ).build(),
                 ).build()
 
-        assertThrows<IllegalArgumentException> { HeadRecordParser.parse(record) }
+        assertThrows<PermanentFailure> { HeadRecordParser.parse(record) }
     }
 
     private fun headRecord(

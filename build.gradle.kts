@@ -174,6 +174,7 @@ project(":rmu") {
 
         "testImplementation"("org.springframework.boot:spring-boot-starter-test")
         "testImplementation"("org.testcontainers:mysql:1.21.4")
+        "testImplementation"("org.testcontainers:localstack:1.21.4")
         "testImplementation"("org.testcontainers:junit-jupiter:1.21.4")
         "testImplementation"("org.flywaydb:flyway-core")
         "testImplementation"("org.flywaydb:flyway-mysql")
