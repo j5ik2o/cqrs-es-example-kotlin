@@ -75,11 +75,15 @@ JDK 17 で配布物を作る。
 ./deploy/build-lambda-package.sh
 ```
 
-スクリプトは `./gradlew :rmu:lambdaZip` を実行し、`rmu/build/distributions/rmu-lambda.zip` を作る。ZIP のルートにハンドラのクラス、`lib/` に依存 JAR が入る。S3 へは `--upload --bucket <name>` を付けたときだけコピーする。
+スクリプトは `./gradlew :rmu:lambdaZip` を実行し、`rmu/build/distributions/rmu-lambda.zip` を作る。ZIP のルートにハンドラのクラス、`lib/` に依存 JAR が入る。`--output` を指定すると、ビルドした ZIP をそのパスにもコピーする。S3 へは `--upload --bucket <name>` を付けたときだけコピーする。
 
 ```sh
 ./deploy/build-lambda-package.sh --upload --bucket your-lambda-artifacts-bucket
 ```
+
+S3 のキーは、指定がなければ `rmu/rmu-lambda-<SHA-256 の先頭 12 桁>.zip` になる。ビルドのたびにキーが変わるため、CloudFormation は新しい配布物を検出して関数を更新する。スクリプトはアップロード後にキーを表示する。表示されたキーを `parameters.json` の `CodeS3Key` に設定する。
+
+同じキーを使い続ける場合は、バケットのバージョニングを有効にし、アップロードしたオブジェクトのバージョン ID を `CodeS3ObjectVersion` に設定する。`Code` の `S3Key` だけが同じでも、バージョン ID が変われば関数は更新される。
 
 ## 適用手順
 
@@ -89,7 +93,7 @@ JDK 17 で配布物を作る。
 cp deploy/parameters.example.json deploy/parameters.json
 ```
 
-`CodeS3Bucket` と `CodeS3Key`、`HeadStreamArn`、`DataSourceSecretArn` などを実際の値にする。`VpcId` を使わない場合は空のままでよい。パラメータファイルは `ParameterKey` と `ParameterValue` の組を並べた JSON 配列で、AWS CLI の `--parameter-overrides file://...` がそのまま読む。空の値も明示的に渡るため、既存スタックの VPC 設定を空にして外すこともできる。
+`CodeS3Bucket` と `CodeS3Key`（ビルドスクリプトが表示したキー）、`HeadStreamArn`、`DataSourceSecretArn` などを実際の値にする。`VpcId` を使わない場合は空のままでよい。パラメータファイルは `ParameterKey` と `ParameterValue` の組を並べた JSON 配列で、AWS CLI の `--parameter-overrides file://...` がそのまま読む。空の値も明示的に渡るため、既存スタックの VPC 設定を空にして外すこともできる。
 
 まずテンプレートの構文だけを確認する。この段階では AWS を呼ばない。
 

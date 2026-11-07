@@ -8,6 +8,10 @@
     "ParameterValue": "rmu/rmu-lambda.zip"
   },
   {
+    "ParameterKey": "CodeS3ObjectVersion",
+    "ParameterValue": ""
+  },
+  {
     "ParameterKey": "HeadStreamArn",
     "ParameterValue": "arn:aws:dynamodb:ap-northeast-1:123456789012:table/head/stream/2026-01-01T00:00:00.000"
   },

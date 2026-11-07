@@ -6,11 +6,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-OUTPUT="${REPO_ROOT}/rmu/build/distributions/rmu-lambda.zip"
+DEFAULT_OUTPUT="${REPO_ROOT}/rmu/build/distributions/rmu-lambda.zip"
+OUTPUT="$DEFAULT_OUTPUT"
 UPLOAD="false"
 SKIP_BUILD="false"
 BUCKET=""
-KEY="rmu/rmu-lambda.zip"
+KEY=""
 
 usage() {
   cat <<'USAGE'
@@ -19,7 +20,9 @@ Usage: build-lambda-package.sh [options]
 Options:
   --upload                Upload the ZIP to --bucket after building it.
   --bucket <name>         S3 bucket for --upload.
-  --key <key>             S3 key. Defaults to rmu/rmu-lambda.zip.
+  --key <key>             S3 key. Defaults to rmu/rmu-lambda-<sha256 prefix>.zip
+                          so a new build always changes the key CloudFormation
+                          sees.
   --output <path>         Local ZIP path. Defaults to rmu/build/distributions/rmu-lambda.zip.
   --skip-build            Reuse an existing ZIP instead of running Gradle.
   -h, --help              Show this help.
@@ -70,6 +73,10 @@ fi
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
   "${REPO_ROOT}/gradlew" -p "${REPO_ROOT}" :rmu:lambdaZip
+  if [[ "$OUTPUT" != "$DEFAULT_OUTPUT" ]]; then
+    mkdir -p "$(dirname "$OUTPUT")"
+    cp "$DEFAULT_OUTPUT" "$OUTPUT"
+  fi
 fi
 
 if [[ ! -f "$OUTPUT" ]]; then
@@ -80,9 +87,13 @@ fi
 echo "lambda package: $OUTPUT"
 echo "size: $(wc -c <"$OUTPUT" | tr -d ' ') bytes"
 if command -v sha256sum >/dev/null 2>&1; then
-  sha256sum "$OUTPUT"
+  DIGEST="$(sha256sum "$OUTPUT" | awk '{print $1}')"
 else
-  shasum -a 256 "$OUTPUT"
+  DIGEST="$(shasum -a 256 "$OUTPUT" | awk '{print $1}')"
+fi
+echo "sha256: $DIGEST"
+if [[ -z "$KEY" ]]; then
+  KEY="rmu/rmu-lambda-${DIGEST:0:12}.zip"
 fi
 
 if [[ "$UPLOAD" != "true" ]]; then
@@ -97,3 +108,4 @@ command -v aws >/dev/null 2>&1 || {
 
 aws s3 cp "$OUTPUT" "s3://${BUCKET}/${KEY}"
 echo "uploaded: s3://${BUCKET}/${KEY}"
+echo "set CodeS3Key in the parameter file to \"$KEY\" so the next deploy picks up this build."

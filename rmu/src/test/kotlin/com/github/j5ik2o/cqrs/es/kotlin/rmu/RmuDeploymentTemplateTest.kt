@@ -216,6 +216,25 @@ class RmuDeploymentTemplateTest {
     }
 
     @Test
+    fun `refreshes the function code when the build changes`() {
+        val template = template()
+
+        assertTrue(template.at("/Parameters/CodeS3ObjectVersion").isObject)
+        assertEquals("", template.at("/Parameters/CodeS3ObjectVersion/Default").asText())
+        assertTrue(template.at("/Conditions/HasCodeObjectVersion").isObject)
+        for (function in listOf("RmuFunction", "RecoveryWorkerFunction", "ResyncWorkerFunction")) {
+            assertEquals(
+                "HasCodeObjectVersion",
+                template.at("/Resources/$function/Properties/Code/S3ObjectVersion/Fn::If/0").asText(),
+            )
+            assertEquals(
+                "CodeS3ObjectVersion",
+                template.at("/Resources/$function/Properties/Code/S3ObjectVersion/Fn::If/1/Ref").asText(),
+            )
+        }
+    }
+
+    @Test
     fun `attaches functions to a vpc only when one is configured`() {
         val template = template()
 

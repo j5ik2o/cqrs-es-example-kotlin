@@ -12,7 +12,12 @@
     },
     "CodeS3Key": {
       "Type": "String",
-      "Description": "S3 key of the RMU Lambda deployment package. It must contain the RMU, recovery worker, and resync worker handlers and their dependencies."
+      "Description": "S3 key of the RMU Lambda deployment package. It must contain the RMU, recovery worker, and resync worker handlers and their dependencies. Use the content-addressed key printed by build-lambda-package.sh."
+    },
+    "CodeS3ObjectVersion": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional S3 object version of the Lambda package. Set it when the bucket has versioning enabled so a redeploy picks up a new build under the same key."
     },
     "HeadStreamArn": {
       "Type": "String",
@@ -173,6 +178,18 @@
           "Fn::Equals": [
             {
               "Ref": "AlarmSnsTopicArn"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasCodeObjectVersion": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "CodeS3ObjectVersion"
             },
             ""
           ]
@@ -429,6 +446,17 @@
           },
           "S3Key": {
             "Ref": "CodeS3Key"
+          },
+          "S3ObjectVersion": {
+            "Fn::If": [
+              "HasCodeObjectVersion",
+              {
+                "Ref": "CodeS3ObjectVersion"
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
           }
         },
         "Timeout": {
@@ -543,6 +571,17 @@
           },
           "S3Key": {
             "Ref": "CodeS3Key"
+          },
+          "S3ObjectVersion": {
+            "Fn::If": [
+              "HasCodeObjectVersion",
+              {
+                "Ref": "CodeS3ObjectVersion"
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
           }
         },
         "Timeout": {
@@ -740,6 +779,17 @@
           },
           "S3Key": {
             "Ref": "CodeS3Key"
+          },
+          "S3ObjectVersion": {
+            "Fn::If": [
+              "HasCodeObjectVersion",
+              {
+                "Ref": "CodeS3ObjectVersion"
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
           }
         },
         "Timeout": {
