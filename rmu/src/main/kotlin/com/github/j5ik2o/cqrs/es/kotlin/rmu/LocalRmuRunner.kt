@@ -30,6 +30,7 @@ class LocalRmuRunner(
     private val maxRecoveryTasksPerRun: Int,
 ) : CommandLineRunner {
     private val logger = LoggerFactory.getLogger(LocalRmuRunner::class.java)
+    private var lastSuccessfulResyncAt: Instant = Instant.EPOCH
 
     override fun run(vararg args: String) {
         logger.info("Starting the local read model updater: headTableName={}", headTableName)
@@ -48,11 +49,9 @@ class LocalRmuRunner(
         while (!Thread.currentThread().isInterrupted) {
             try {
                 val lastRecordTime = poller.lastRecordTime()
-                if (lastRecordTime != null &&
-                    lastRecordTime.isBefore(Instant.now().minus(STREAM_RETENTION))
-                ) {
+                if (shouldResync(lastRecordTime, lastSuccessfulResyncAt, Instant.now())) {
                     logger.warn(
-                        "The reader was stopped longer than the stream retention window; running a full resync",
+                        "The reader has not reconciled or read a record for longer than the stream retention window; running a full resync",
                     )
                     if (!resync("resync after the retention window")) {
                         sleep(backoff.next())
@@ -100,6 +99,9 @@ class LocalRmuRunner(
     private fun resync(label: String): Boolean =
         try {
             retryPolicy.run { resyncer.resync() }
+            // The resync scans the current head table, so it also becomes the baseline for the
+            // next retention check. This covers a reader that never completed a stream page.
+            lastSuccessfulResyncAt = Instant.now()
             true
         } catch (e: RetryInterruptedException) {
             throw e
@@ -134,6 +136,20 @@ class LocalRmuRunner(
     }
 
     companion object {
-        private val STREAM_RETENTION: Duration = Duration.ofHours(24)
+        internal val STREAM_RETENTION: Duration = Duration.ofHours(24)
+
+        /**
+         * Returns whether the reader should reconcile every head again. The baseline is the
+         * later of the last record read and the last successful resync, so a reader that never
+         * completed a page still resyncs after the retention window.
+         */
+        internal fun shouldResync(
+            lastRecordTime: Instant?,
+            lastSuccessfulResyncAt: Instant,
+            now: Instant,
+        ): Boolean {
+            val lastActivity = maxOf(lastRecordTime ?: Instant.MIN, lastSuccessfulResyncAt)
+            return lastActivity.isBefore(now.minus(STREAM_RETENTION))
+        }
     }
 }
