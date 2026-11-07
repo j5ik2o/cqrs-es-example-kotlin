@@ -7,11 +7,6 @@ spring:
 server:
   port: ${SERVER_PORT:56080}
 app:
-  dynamo-db:
-    region: ${AWS_REGION:ap-northeast-1}
-    endpoint-url: ${DYNAMODB_ENDPOINT_URL:http://localhost:4566}
-    access-key: ${AWS_ACCESS_KEY_ID:x}
-    secret-access-key: ${AWS_SECRET_ACCESS_KEY:x}
   persistence:
     journal-table-name: ${JOURNAL_TABLE_NAME:journal}
     snapshot-table-name: ${SNAPSHOT_TABLE_NAME:snapshot}

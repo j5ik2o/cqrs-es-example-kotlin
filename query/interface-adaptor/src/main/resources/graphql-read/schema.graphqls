@@ -1,0 +1,47 @@
+"""
+ISO 8601 combined date and time without timezone.
+
+# Examples
+
+* `2015-07-01T08:59:59.123`
+"""
+scalar NaiveDateTime
+
+type GroupChat {
+    id: String!
+    name: String!
+    ownerId: String!
+    createdAt: NaiveDateTime!
+    updatedAt: NaiveDateTime!
+}
+
+type Member {
+    id: String!
+    groupChatId: String!
+    userAccountId: String!
+    role: String!
+    createdAt: NaiveDateTime!
+    updatedAt: NaiveDateTime!
+}
+
+type Message {
+    id: String!
+    groupChatId: String!
+    userAccountId: String!
+    text: String!
+    createdAt: NaiveDateTime!
+    updatedAt: NaiveDateTime!
+}
+
+type Query {
+    getGroupChat(groupChatId: String!, userAccountId: String!): GroupChat!
+    getGroupChats(userAccountId: String!): [GroupChat!]!
+    getMember(groupChatId: String!, userAccountId: String!): Member!
+    getMembers(groupChatId: String!, userAccountId: String!): [Member!]!
+    getMessage(messageId: String!, userAccountId: String!): Message!
+    getMessages(groupChatId: String!, userAccountId: String!): [Message!]!
+}
+
+schema {
+    query: Query
+}

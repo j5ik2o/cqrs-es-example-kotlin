@@ -58,4 +58,4 @@ Write API は呼び出し元を認証しません。実行者 ID はクライア
 
 ## 残作業
 
-Read API では、6 つの Query を MySQL のリードモデルに対して実装します。RMU では、head テーブルの Streams を購読し、重複と古い番号を捨て、番号の飛びを journal から補い、処理位置を `read_model_positions` に記録します。その後、compose と e2e を追加します。
+Read API と RMU は実装済みです。Read API は 6 つの Query を MySQL のリードモデルに対して提供します。RMU は head テーブルの Streams を購読し、重複と古い番号を捨て、番号の飛びを journal から補い、処理位置を `read_model_positions` に記録します。次の段階で compose と e2e、RMU の復旧処理を追加します。詳しくは `QUERY_AND_RMU.ja.md` を参照してください。

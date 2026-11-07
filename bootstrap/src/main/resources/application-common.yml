@@ -1,9 +1,28 @@
 spring:
   main:
     banner-mode: "off"
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/ceer?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${SPRING_DATASOURCE_USERNAME:ceer}
+    password: ${SPRING_DATASOURCE_PASSWORD:ceer}
+    hikari:
+      initialization-fail-timeout: -1
   graphql:
     graphiql:
       enabled: ${GRAPHIQL_ENABLED:true}
 logging:
   level:
     root: info
+app:
+  dynamo-db:
+    region: ${AWS_REGION:ap-northeast-1}
+    endpoint-url: ${DYNAMODB_ENDPOINT_URL:http://localhost:4566}
+    access-key: ${AWS_ACCESS_KEY_ID:x}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY:x}
+  stream:
+    head-table-name: ${HEAD_TABLE_NAME:head}
+    journal-table-name: ${JOURNAL_TABLE_NAME:journal}
+    max-item-count: ${STREAM_MAX_ITEM_COUNT:32}
+    poll-backoff-initial-millis: ${STREAM_POLL_BACKOFF_INITIAL_MILLIS:500}
+    poll-backoff-max-millis: ${STREAM_POLL_BACKOFF_MAX_MILLIS:30000}
