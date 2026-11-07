@@ -1,0 +1,69 @@
+services:
+  write-api-server-1:
+    image: cqrs-es-example-kotlin:e2e
+    command: ["-w"]
+    ports:
+      - "56080:8080"
+    environment:
+      SERVER_PORT: 8080
+      AWS_REGION: ap-northeast-1
+      DYNAMODB_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: x
+      AWS_SECRET_ACCESS_KEY: x
+      JOURNAL_TABLE_NAME: journal
+      SNAPSHOT_TABLE_NAME: snapshot
+      HEAD_TABLE_NAME: head
+      SNAPSHOT_AID_INDEX_NAME: snapshot-aid-index
+      SNAPSHOT_INTERVAL: 10
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/ceer?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      SPRING_DATASOURCE_USERNAME: ceer
+      SPRING_DATASOURCE_PASSWORD: ceer
+    depends_on:
+      localstack:
+        condition: service_healthy
+      dynamodb-setup:
+        condition: service_completed_successfully
+
+  read-model-updater-1:
+    image: cqrs-es-example-kotlin:e2e
+    command: ["-l"]
+    environment:
+      AWS_REGION: ap-northeast-1
+      DYNAMODB_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: x
+      AWS_SECRET_ACCESS_KEY: x
+      JOURNAL_TABLE_NAME: journal
+      HEAD_TABLE_NAME: head
+      STREAM_MAX_ITEM_COUNT: 32
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/ceer?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      SPRING_DATASOURCE_USERNAME: ceer
+      SPRING_DATASOURCE_PASSWORD: ceer
+    depends_on:
+      localstack:
+        condition: service_healthy
+      dynamodb-setup:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+  read-api-server-1:
+    image: cqrs-es-example-kotlin:e2e
+    command: ["-r"]
+    ports:
+      - "56082:8080"
+    environment:
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/ceer?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      SPRING_DATASOURCE_USERNAME: ceer
+      SPRING_DATASOURCE_PASSWORD: ceer
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      write-api-server-1:
+        condition: service_started
+      read-model-updater-1:
+        condition: service_started

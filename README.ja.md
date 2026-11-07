@@ -35,7 +35,7 @@ Write API は 8 つの Mutation と `healthCheck` を公開します。集約は
 ## 必要なもの
 
 - JDK 17 以上。ビルドの対象は JVM 17 です。
-- Docker。LocalStack と MySQL の結合テスト、およびローカル環境に使います。
+- Docker と Docker Compose。Testcontainers の結合テスト、ローカル環境、e2e に使います。
 
 ## ビルドとテスト
 
@@ -108,9 +108,9 @@ RMU は head テーブルの DynamoDB Streams を購読します。`INSERT` と 
 LocalStack と MySQL を起動し、DynamoDB のテーブルと MySQL のスキーマを作ります。
 
 ```sh
-docker compose -f tools/docker-compose/docker-compose-local.yml up -d --wait localstack mysql
-docker compose -f tools/docker-compose/docker-compose-local.yml run --rm dynamodb-setup
-docker compose -f tools/docker-compose/docker-compose-local.yml run --rm flyway
+docker compose -f tools/docker-compose/docker-compose-databases.yml up -d --wait localstack mysql
+docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm dynamodb-setup
+docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm migration
 ```
 
 実行可能な jar をビルドします。
@@ -156,8 +156,20 @@ curl -s http://localhost:56082/graphql \
 スタックを止めます。
 
 ```sh
-docker compose -f tools/docker-compose/docker-compose-local.yml down
+docker compose -f tools/docker-compose/docker-compose-databases.yml down
 ```
+
+## e2e
+
+e2e のスクリプトは、アプリのイメージと e2e のイメージをビルドし、LocalStack、MySQL、マイグレーション、3 つのアプリを起動して検証します。各イベントが RMU に反映されるまで Read API をポーリングするため、固定の sleep に頼りません。
+
+```sh
+./tools/scripts/docker-compose-e2e-test.sh
+```
+
+スクリプトは検証を 2 回実行します。1 回目はそのまま、2 回目は RMU を再起動したあとです。2 回目で、`read_model_positions` が再生された head のレコードを捨て、MySQL に重複行が入らないことを確認します。失敗したときは compose のログを出して、その終了コードで終わります。
+
+検証する操作は `createGroupChat`、`addMember`、`postMessage`、`renameGroupChat`、`editMessage`、`deleteMessage`、`removeMember`、`deleteGroupChat` と、6 つの Read API の Query です。
 
 ## 設定
 
@@ -223,22 +235,22 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 
 ## CI
 
-`.github/workflows/ci.yml` は `main` への push と pull request で 2 つのジョブを実行します。
+`.github/workflows/ci.yml` は `main` への push と pull request で 3 つのジョブを実行します。
 
 - `lint`: `./gradlew spotlessCheck`
 - `test`: `./gradlew test`
+- `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
 
-テストのジョブは Testcontainers のために Docker を使います。
+テストと e2e のジョブは Docker を使います。
 
 ## 残作業
 
-次の段階で e2e と RMU の復旧処理を追加します。
+e2e の構成は入りました。次は RMU の復旧処理です。
 
-1. Write、RMU、Read をまとめて動かす compose のサービスと検証スクリプトを追加します。
-2. RMU の復旧処理を追加します。起動時に head を全件走査し、Streams が切り詰められたときに再同期し、恒久的な失敗を復旧タスクとして記録します。復旧処理を実装するときに `read_model_recovery_tasks` のマイグレーションを追加します。
-3. 共通のマイルストーンで必要なら、Lambda ハンドラと AWS のデプロイ資産を追加します。
-4. 24 時間の Streams 保持期間より長く止まる場合に備え、処理位置の永続化を検討します。
-5. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。
+1. RMU の復旧処理を追加します。起動時に head を全件走査し、Streams が切り詰められたときに再同期し、恒久的な失敗を復旧タスクとして記録します。復旧処理を実装するときに `read_model_recovery_tasks` のマイグレーションを追加します。
+2. 共通のマイルストーンで必要なら、Lambda ハンドラと AWS のデプロイ資産を追加します。
+3. 24 時間の Streams 保持期間より長く止まる場合に備え、処理位置の永続化を検討します。
+4. 最終的なポート、テーブル名、環境変数の決まりをハブの受け入れ基準に反映します。
 
 ## Java 版との対応
 
@@ -249,6 +261,7 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 - RMU は Java 版の Lambda ハンドラ、復旧タスク、再同期を含みません。AWS SDK で head Streams を直接読み、位置のルールと journal からの補完を実装しています。
 - Kotlin の命名規則に合わせて、パッケージ名は `interfaceadaptor` にしました。ディレクトリ名は Java 版に合わせて `interface-adaptor-*` のままです。ktlint の `package-name` ルールがアンダースコアを許可しないためです。
 - Write API のポートは 56080、Read API のポートは 56082 です。68080 は 65535 を超えるため使えません。
+- e2e の compose と検証スクリプトは Java 版の構成に合わせています。README は既存の英語版と日本語版の両方を更新しました。
 
 ## ライセンス
 

@@ -44,7 +44,7 @@ path are not ported yet.
 ## Requirements
 
 - JDK 17 or later. The build targets JVM 17.
-- Docker (for the LocalStack and MySQL integration tests, and for the local stack).
+- Docker with the Compose plugin (for the Testcontainers integration tests, the local stack, and the e2e).
 
 ## Build and test
 
@@ -143,9 +143,9 @@ recovery tasks, and dead-letter handling are remaining work.
 Start LocalStack, MySQL, and apply the read model migrations:
 
 ```sh
-docker compose -f tools/docker-compose/docker-compose-local.yml up -d --wait localstack mysql
-docker compose -f tools/docker-compose/docker-compose-local.yml run --rm dynamodb-setup
-docker compose -f tools/docker-compose/docker-compose-local.yml run --rm flyway
+docker compose -f tools/docker-compose/docker-compose-databases.yml up -d --wait localstack mysql
+docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm dynamodb-setup
+docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm migration
 ```
 
 Build the executable jar:
@@ -193,8 +193,25 @@ curl -s http://localhost:56082/graphql \
 Stop the stack:
 
 ```sh
-docker compose -f tools/docker-compose/docker-compose-local.yml down
+docker compose -f tools/docker-compose/docker-compose-databases.yml down
 ```
+
+## End-to-end test
+
+The e2e script builds the application image and the e2e image, starts LocalStack, MySQL, the
+migration, the three applications, and runs the verification. It polls the Read API until the RMU
+reflects each event, so it does not rely on a fixed sleep.
+
+```sh
+./tools/scripts/docker-compose-e2e-test.sh
+```
+
+The script runs the verification twice: once normally and once after restarting the RMU. The
+second run confirms that the `read_model_positions` rows drop the replayed head records and that no
+duplicate rows reach MySQL. On failure it prints the compose logs and exits with the failure.
+
+The verification covers `createGroupChat`, `addMember`, `postMessage`, `renameGroupChat`,
+`editMessage`, `deleteMessage`, `removeMember`, and `deleteGroupChat`, and the six read queries.
 
 ## Configuration
 
@@ -273,24 +290,24 @@ queries filter them out.
 
 ## CI
 
-`.github/workflows/ci.yml` runs two jobs on pushes and pull requests to `main`:
+`.github/workflows/ci.yml` runs three jobs on pushes and pull requests to `main`:
 
 - `lint`: `./gradlew spotlessCheck`
 - `test`: `./gradlew test`
+- `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
 
-The test job relies on Docker for Testcontainers.
+The test and e2e jobs rely on Docker.
 
 ## Remaining work
 
-The next milestone adds the end-to-end stack and the RMU recovery path:
+The end-to-end stack is in place. The next work is the RMU recovery path:
 
-1. Add the compose services and a verify script for Write, RMU, and Read.
-2. Add the RMU recovery path. Scan the head table on startup, resync after a trimmed stream, and
+1. Add the RMU recovery path. Scan the head table on startup, resync after a trimmed stream, and
    record permanent failures as recovery tasks. Add the `read_model_recovery_tasks` migration when
    the path is implemented.
-3. Add the Lambda handler and the AWS deployment assets if the common milestone requires them.
-4. Add a persisted stream checkpoint if the 24-hour stream retention is shorter than a normal stop.
-5. Document the final port, table, and environment variable conventions in the hub acceptance
+2. Add the Lambda handler and the AWS deployment assets if the common milestone requires them.
+3. Add a persisted stream checkpoint if the 24-hour stream retention is shorter than a normal stop.
+4. Document the final port, table, and environment variable conventions in the hub acceptance
    criteria.
 
 ## License
