@@ -96,11 +96,21 @@ class RmuDeploymentTemplateTest {
 
         assertEquals("HeadTableName", variables.at("/HEAD_TABLE_NAME/Ref").asText())
         assertEquals("JournalTableName", variables.at("/JOURNAL_TABLE_NAME/Ref").asText())
-        assertEquals("RetryMaxAttempts", variables.at("/STREAM_RETRY_MAX_ATTEMPTS/Fn::Sub").asText().let { refText(it) })
-        assertNotNull(variables.at("/STREAM_RETRY_MAX_ELAPSED_MILLIS"))
-        assertNotNull(variables.at("/STREAM_RETRY_INITIAL_DELAY_MILLIS"))
-        assertNotNull(variables.at("/STREAM_RETRY_MAX_DELAY_MILLIS"))
-        assertNotNull(variables.at("/APP_RECOVERY_MAX_TASKS_PER_RUN"))
+        val retryParameters =
+            mapOf(
+                "STREAM_RETRY_MAX_ATTEMPTS" to "RetryMaxAttempts",
+                "STREAM_RETRY_MAX_ELAPSED_MILLIS" to "RetryMaxElapsedMillis",
+                "STREAM_RETRY_INITIAL_DELAY_MILLIS" to "RetryInitialDelayMillis",
+                "STREAM_RETRY_MAX_DELAY_MILLIS" to "RetryMaxDelayMillis",
+            )
+        for ((variable, parameter) in retryParameters) {
+            assertTrue(variables.at("/$variable").isObject, "$variable is missing")
+            assertEquals(parameter, refText(variables.at("/$variable/Fn::Sub").asText()))
+        }
+        assertEquals(
+            "RecoveryMaxTasksPerRun",
+            refText(variables.at("/APP_RECOVERY_MAX_TASKS_PER_RUN/Fn::Sub").asText()),
+        )
     }
 
     @Test

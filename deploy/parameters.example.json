@@ -5,7 +5,7 @@
   },
   {
     "ParameterKey": "CodeS3Key",
-    "ParameterValue": "rmu/rmu-lambda.zip"
+    "ParameterValue": "rmu/rmu-lambda-0123456789ab.zip"
   },
   {
     "ParameterKey": "CodeS3ObjectVersion",
