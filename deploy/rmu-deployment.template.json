@@ -160,7 +160,19 @@
       "Default": 300,
       "MinValue": 60,
       "MaxValue": 86400,
-      "Description": "Evaluation period in seconds shared by every alarm. CloudWatch keeps the last 300 seconds as the default window."
+      "AllowedValues": [
+        60,
+        120,
+        300,
+        600,
+        900,
+        1800,
+        3600,
+        21600,
+        43200,
+        86400
+      ],
+      "Description": "Metric period in seconds shared by every alarm. CloudWatch standard-resolution metrics accept multiples of 60 seconds; the default 300 is the usual five-minute window."
     },
     "RecoveryBacklogThreshold": {
       "Type": "Number",

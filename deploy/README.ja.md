@@ -116,6 +116,7 @@ aws lambda invoke \
   --function-name cqrs-es-example-kotlin-rmu-rmu-resync-worker \
   --payload '{}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 960 \
   /tmp/resync-worker-response.json
 ```
 
@@ -182,6 +183,7 @@ aws lambda invoke \
   --function-name cqrs-es-example-kotlin-rmu-rmu-recovery-worker \
   --payload '{"Records":[]}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 360 \
   /tmp/recovery-worker-response.json
 ```
 
@@ -213,7 +215,7 @@ aws lambda invoke \
 | パラメータ | 既定 | 用途 |
 |:--|:--|:--|
 | `AlarmSnsTopicArn` | 空 | 通知先の SNS トピック。空ならアラームは作るがアクションは付けない。実値は環境ごとの `parameters.json` で指定する。 |
-| `AlarmPeriodSeconds` | `300` | 全アラーム共通のメトリクス期間（秒）。 |
+| `AlarmPeriodSeconds` | `300` | 全アラーム共通のメトリクス期間（秒）。60 の倍数のみを許可する。 |
 | `RecoveryBacklogThreshold` | `10` | 復旧キューの滞留しきい値。 |
 | `RecoveryBacklogEvaluationPeriods` | `2` | 復旧キューの滞留が連続して必要な期間数。 |
 | `OnFailureQueueThreshold` | `0` | OnFailure キューのしきい値。 |

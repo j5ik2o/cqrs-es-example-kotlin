@@ -47,6 +47,7 @@ aws lambda invoke \
   --function-name "${STACK_NAME}-rmu-resync-worker" \
   --payload '{}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 960 \
   /tmp/resync-worker-response.json
 
 cat /tmp/resync-worker-response.json
@@ -63,16 +64,73 @@ cat /tmp/resync-worker-response.json
 
 `failed` が 0 でない場合は、次の節の「復旧タスクが滞留したとき」を確認する。ワーカーが例外を返した場合は、DB や DynamoDB の一時障害が考えられる。原因を取り除いてもう一度実行する。
 
+`--cli-read-timeout` は関数のタイムアウト（`ResyncWorkerTimeoutSeconds` の既定 900 秒）より長くしている。指定しないと AWS CLI の既定 60 秒で先にタイムアウトし、Lambda が動いていても結果を確認できない。復旧ワーカーの呼び出しも、`RecoveryWorkerTimeoutSeconds`（既定 300 秒）より長い 360 秒にしている。
+
 ### 4. journal 補完を確認する
 
-再同期のあと、MySQL で位置が head に追いついたことを確認する。
+再同期のあと、head の `seq_nr` と `read_model_positions` を集約 ID ごとに比較する。件数で絞らずに全件を突き合わせることで、位置行がない集約と、位置が head より遅れている集約の両方を見つけられる。
+
+まず head テーブルを ConsistentRead で Scan し、集約 ID と `seq_nr` を取り出す。
+
+```sh
+aws dynamodb scan \
+  --table-name head \
+  --consistent-read \
+  --projection-expression "aid, seq_nr" \
+  --filter-expression "aid <> :config" \
+  --expression-attribute-values '{":config":{"S":"__config__"}}' \
+  --output json > /tmp/head-seq-nr.json
+```
+
+MySQL の位置を TSV で取り出す。
+
+```sh
+mysql --batch --raw --skip-column-names \
+  -h <host> -u <user> -p <database> \
+  -e "SELECT aggregate_id, seq_nr FROM read_model_positions" \
+  > /tmp/read-model-positions.tsv
+```
+
+2 つのファイルを集約 ID で突き合わせる。
+
+```sh
+python3 - <<'PY'
+import json
+
+with open("/tmp/head-seq-nr.json") as f:
+    items = json.load(f)["Items"]
+
+positions = {}
+with open("/tmp/read-model-positions.tsv") as f:
+    for line in f:
+        if line.strip():
+            aid, seq = line.split()
+            positions[aid] = int(seq)
+
+lagging = []
+for item in items:
+    aid = item["aid"]["S"]
+    if not aid.startswith("GroupChat-"):
+        continue
+    head_seq = int(item["seq_nr"]["N"])
+    position = positions.get(aid, 0)
+    if head_seq > position:
+        lagging.append((aid, position, head_seq))
+
+if not lagging:
+    print("all head positions are up to date")
+else:
+    print(f"{len(lagging)} aggregates lag behind")
+    for aid, position, head_seq in sorted(lagging):
+        print(f"{aid}\tposition={position}\thead={head_seq}")
+PY
+```
+
+`all head positions are up to date` になれば journal 補完は完了している。`lag behind` が出た場合は `ResyncWorker` の `advanced` と `failed` を確認し、必要ならもう一度実行する。位置行がない集約は `position=0` として表示される。
+
+復旧タスクの滞留も確認する。
 
 ```sql
-SELECT aggregate_id, seq_nr
-FROM read_model_positions
-ORDER BY seq_nr DESC
-LIMIT 20;
-
 SELECT store_id, projection_name, aggregate_id, seq_nr, status, failure_type, error_message
 FROM read_model_recovery_tasks
 WHERE status = 'pending'
@@ -86,6 +144,7 @@ aws lambda invoke \
   --function-name "${STACK_NAME}-rmu-recovery-worker" \
   --payload '{"Records":[]}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 360 \
   /tmp/recovery-worker-response.json
 ```
 
@@ -93,7 +152,7 @@ aws lambda invoke \
 
 1. `read_model_recovery_tasks` の `pending` が 0 になったことを確認する。完了した行の `status` は `completed` になる。
 2. イベントソースマッピングの `IteratorAge` が平常時に戻り、`Errors` と `Throttles` が増えていないことを確認する。
-3. `OnFailureQueueAlarm`、`OnFailureDlqAlarm`、`RecoveryDlqAlarm` が `OK` に戻ったことを確認する。
+3. `OnFailureQueueAlarm`、`OnFailureDlqAlarm`、`RecoveryDlqAlarm` が `OK` に戻ったことを確認する。キューにメッセージが残っていると `OK` に戻らないため、復旧と位置の確認が済んだメッセージは削除する（「DLQ のメッセージを確認して処理する」を参照）。
 4. 代表的な集約について、Read API の表示が command 側の状態と一致することを確認する。読み取りモデルの遅れは `read_model_positions` の `seq_nr` と head の `seq_nr` の比較でも確認できる。
 
 ## アラートと一次対応
@@ -103,9 +162,9 @@ aws lambda invoke \
 | アラーム | 主なメトリクス | 意味 | 一次対応 |
 |:--|:--|:--|:--|
 | `RecoveryBacklogAlarm` | `RecoveryQueue` の `ApproximateNumberOfMessagesVisible` | 復旧タスクの滞留 | `read_model_recovery_tasks` の `pending` を確認し、復旧ワーカーを実行する。 |
-| `OnFailureQueueAlarm` | `OnFailureQueue` の `ApproximateNumberOfMessagesVisible` | ストリームレコードが Lambda の再試行上限に達した | `DynamoDBBatchInfo` の範囲を `GetRecords` で読み直すか、保持期間外なら全件再同期する。 |
-| `OnFailureDlqAlarm` | `OnFailureDlq` の `ApproximateNumberOfMessagesVisible` | OnFailure キューの再試行も尽きた | メッセージを退避し、シーケンス番号の範囲を手動で再生する。 |
-| `RecoveryDlqAlarm` | `RecoveryDlq` の `ApproximateNumberOfMessagesVisible` | 復旧タスクが SQS の再試行上限に達した | 対象の集約と `seq_nr` を確認し、原因を除いてから復旧ワーカーを実行する。 |
+| `OnFailureQueueAlarm` | `OnFailureQueue` の `ApproximateNumberOfMessagesVisible` | ストリームレコードが Lambda の再試行上限に達した | `DynamoDBBatchInfo` の範囲を `GetRecords` で読み直す。保持期間外なら `ResyncWorker` で全件再同期する。処理後はメッセージを削除する。 |
+| `OnFailureDlqAlarm` | `OnFailureDlq` の `ApproximateNumberOfMessagesVisible` | OnFailure キューの再試行も尽きた | メッセージを退避し、シーケンス番号の範囲を手動で再生する。保持期間外なら `ResyncWorker` を使う。処理後はメッセージを削除する。 |
+| `RecoveryDlqAlarm` | `RecoveryDlq` の `ApproximateNumberOfMessagesVisible` | 復旧タスクが SQS の再試行上限に達した | 対象の集約と `seq_nr` を確認し、原因を除いてから復旧ワーカーを実行する。完了したタスクのメッセージは削除する。 |
 | `RecoveryWorkerErrorsAlarm` | `RecoveryWorkerFunction` の `Errors` | 復旧ワーカーの関数エラー | ログで DB と journal のエラーを確認する。 |
 | `ResyncWorkerErrorsAlarm` | `ResyncWorkerFunction` の `Errors` | 再同期ワーカーの関数エラー | ログでストレージ障害を確認し、再同期を再実行する。 |
 | `ResyncScheduleFailedInvocationsAlarm` | `ResyncWorkerSchedule` の `FailedInvocations` | 定期再同期の起動失敗 | Lambda の権限と状態を確認し、手動で再同期する。 |
@@ -117,7 +176,7 @@ aws lambda invoke \
 | パラメータ | 既定 | 用途 |
 |:--|:--|:--|
 | `AlarmSnsTopicArn` | 空 | 通知先の SNS トピック。空ならアラームは作るがアクションは付けない。 |
-| `AlarmPeriodSeconds` | `300` | 全アラーム共通のメトリクス期間（秒）。 |
+| `AlarmPeriodSeconds` | `300` | 全アラーム共通のメトリクス期間（秒）。60 の倍数のみを許可する。 |
 | `RecoveryBacklogThreshold` | `10` | 復旧キューの滞留しきい値。 |
 | `RecoveryBacklogEvaluationPeriods` | `2` | 復旧キューの滞留が連続して必要な期間数。 |
 | `OnFailureQueueThreshold` | `0` | OnFailure キューのしきい値。 |
@@ -149,20 +208,52 @@ aws lambda invoke \
   --function-name "${STACK_NAME}-rmu-recovery-worker" \
   --payload '{"Records":[]}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 360 \
   /tmp/recovery-worker-response.json
 ```
 
 5. `status` が `completed` になり、`read_model_positions` が対象の `seq_nr` 以上に進んだことを確認する。
 
-## DLQ のメッセージを確認するとき
+## DLQ のメッセージを確認して処理する
+
+`OnFailureQueue`、`OnFailureDlq`、`RecoveryDlq` のメッセージは、ワーカーが自動で消すとは限らない。復旧が完了してもメッセージが残っていればアラームは `OK` に戻らない。確認、復旧、削除の順で処理する。
+
+### 確認する
+
+`RecoveryDlq` を例にする。他のキューも `OutputKey` を `OnFailureQueueUrl` と `OnFailureDlqUrl` に変えて同じ手順で確認できる。
 
 ```sh
+QUEUE_URL=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query 'Stacks[0].Outputs[?OutputKey==`RecoveryDlqUrl`].OutputValue' --output text)
+
 aws sqs receive-message \
-  --queue-url "$(aws cloudformation describe-stacks \
-    --stack-name "$STACK_NAME" \
-    --query 'Stacks[0].Outputs[?OutputKey==`RecoveryDlqUrl`].OutputValue' --output text)" \
+  --queue-url "$QUEUE_URL" \
   --max-number-of-messages 10 \
   --visibility-timeout 0
 ```
 
-確認だけなら `--visibility-timeout 0` を付け、メッセージを再び見えるようにしておく。本文にはイベント本文が入らない。識別子から journal と `read_model_recovery_tasks` を引き直して原因を見る。
+`--visibility-timeout 0` を付けると、確認したメッセージはすぐ再び可視になる。本文にはイベント本文が入らない。識別子から journal と `read_model_recovery_tasks` を引き直して原因を見る。受信を繰り返すと `ReceiptHandle` が変わるため、削除するときはその時点の `ReceiptHandle` を使う。
+
+### 復旧する
+
+- `RecoveryDlq`: 対象の集約と `seq_nr` を確認し、原因を除いてから復旧ワーカーを実行する。`status` が `completed` になったことを確認する。
+- `OnFailureQueue` / `OnFailureDlq`: `DynamoDBBatchInfo` のシーケンス番号の範囲を `GetRecords` で読み直し、RMU の入力と同じ形に組み立てて再送する。Streams の保持期間を過ぎていて `GetRecords` で読めない場合は、シーケンス範囲を手動で再生できない。その場合は journal が残っていることを確認して `ResyncWorker` で全件再同期する。
+
+### 処理後に削除する
+
+復旧と位置の確認が済んだメッセージだけを削除する。削除してよいかの判断がつかないうちは消さない。
+
+```sh
+aws sqs delete-message \
+  --queue-url "$QUEUE_URL" \
+  --receipt-handle "<受信時の ReceiptHandle>"
+```
+
+残っているメッセージをまとめて消す場合は、すべてのメッセージが処理済みであることを確認してからキューを空にする。`purge-queue` は取り消せないため、退避が必要なメッセージがないことを先に確かめる。
+
+```sh
+aws sqs purge-queue --queue-url "$QUEUE_URL"
+```
+
+削除後に `OnFailureQueueAlarm`、`OnFailureDlqAlarm`、`RecoveryDlqAlarm` が `OK` に戻ったことを確認する。

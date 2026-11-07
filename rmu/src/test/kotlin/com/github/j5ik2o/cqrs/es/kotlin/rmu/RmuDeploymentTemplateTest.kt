@@ -258,6 +258,13 @@ class RmuDeploymentTemplateTest {
         val parameters = template().path("Parameters")
 
         assertTrue(parameters.at("/AlarmPeriodSeconds/MinValue").asInt() >= 60)
+        val allowedPeriods = parameters.at("/AlarmPeriodSeconds/AllowedValues")
+        assertTrue(allowedPeriods.size() >= 2, "AlarmPeriodSeconds must restrict its values")
+        val defaultPeriod = parameters.at("/AlarmPeriodSeconds/Default").asInt()
+        assertTrue(allowedPeriods.any { it.asInt() == defaultPeriod }, "the default must be allowed")
+        for (period in allowedPeriods) {
+            assertEquals(0, period.asInt() % 60, "AlarmPeriodSeconds must be a multiple of 60: $period")
+        }
         val names = parameters.fieldNames().asSequence().toList()
         for (name in names.filter { it.endsWith("EvaluationPeriods") }) {
             assertTrue(parameters.at("/$name/MinValue").asInt() >= 1, "$name must allow at least one period")
