@@ -53,6 +53,8 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+        // Tests load the shared SQL migrations from tools/refinery/migrations.
+        workingDir = rootProject.projectDir
     }
 
     tasks.named<BootJar>("bootJar") {
@@ -138,6 +140,47 @@ project(":command:interface-adaptor-impl") {
     }
 }
 
+project(":query:interface-adaptor") {
+    dependencies {
+        "implementation"("org.springframework:spring-context")
+        "implementation"("org.springframework.boot:spring-boot-starter-graphql")
+        "implementation"("org.springframework.boot:spring-boot-starter-jdbc")
+        "implementation"("io.projectreactor:reactor-core:3.8.8")
+
+        "runtimeOnly"("com.mysql:mysql-connector-j")
+
+        "testImplementation"("org.springframework.boot:spring-boot-starter-test")
+        "testImplementation"("org.springframework.graphql:spring-graphql-test")
+        "testImplementation"(project(":command:domain"))
+        "testImplementation"("org.testcontainers:mysql:1.21.4")
+        "testImplementation"("org.testcontainers:junit-jupiter:1.21.4")
+        "testImplementation"("org.flywaydb:flyway-core")
+        "testImplementation"("org.flywaydb:flyway-mysql")
+        "testImplementation"("com.mysql:mysql-connector-j")
+    }
+}
+
+project(":rmu") {
+    dependencies {
+        "implementation"(project(":command:domain"))
+        "implementation"(project(":command:interface-adaptor-impl"))
+        "implementation"("io.github.j5ik2o:event-store-adapter-kotlin:$eventStoreAdapterVersion")
+
+        "implementation"("org.springframework:spring-context")
+        "implementation"("org.springframework.boot:spring-boot-starter-jdbc")
+        "implementation"("software.amazon.awssdk:dynamodb:$awsSdkVersion")
+
+        "runtimeOnly"("com.mysql:mysql-connector-j")
+
+        "testImplementation"("org.springframework.boot:spring-boot-starter-test")
+        "testImplementation"("org.testcontainers:mysql:1.21.4")
+        "testImplementation"("org.testcontainers:junit-jupiter:1.21.4")
+        "testImplementation"("org.flywaydb:flyway-core")
+        "testImplementation"("org.flywaydb:flyway-mysql")
+        "testImplementation"("com.mysql:mysql-connector-j")
+    }
+}
+
 project(":bootstrap") {
     tasks.named<BootJar>("bootJar") {
         enabled = true
@@ -148,10 +191,14 @@ project(":bootstrap") {
         "implementation"(project(":command:domain"))
         "implementation"(project(":command:interface-adaptor-impl"))
         "implementation"(project(":command:processor"))
+        "implementation"(project(":query:interface-adaptor"))
+        "implementation"(project(":rmu"))
         "implementation"("org.springframework.boot:spring-boot-starter-webflux")
+        "implementation"("org.springframework.boot:spring-boot-starter-jdbc")
         "implementation"("commons-cli:commons-cli:1.11.0")
         "implementation"("software.amazon.awssdk:dynamodb:$awsSdkVersion")
         "implementation"("io.github.j5ik2o:event-store-adapter-kotlin:$eventStoreAdapterVersion")
         "implementation"("org.springframework.boot:spring-boot-configuration-processor")
+        "runtimeOnly"("com.mysql:mysql-connector-j")
     }
 }

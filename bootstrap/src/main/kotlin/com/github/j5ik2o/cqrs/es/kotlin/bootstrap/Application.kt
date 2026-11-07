@@ -35,17 +35,17 @@ class Application {
                     }
 
                     commandLine.hasOption("r") -> {
-                        System.err.println("read api is not implemented yet")
-                        exitProcess(1)
+                        "read"
                     }
 
                     commandLine.hasOption("l") -> {
-                        System.err.println("local rmu is not implemented yet")
-                        exitProcess(1)
+                        "local-rmu"
                     }
 
                     else -> {
-                        System.err.println("profile is not specified. Use -w for the write api.")
+                        System.err.println(
+                            "profile is not specified. Use -w, -r, or -l.",
+                        )
                         exitProcess(1)
                     }
                 }

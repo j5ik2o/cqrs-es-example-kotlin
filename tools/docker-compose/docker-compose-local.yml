@@ -29,5 +29,40 @@ services:
       - ../dynamodb-setup:/scripts:ro
     entrypoint: ["/bin/sh", "/scripts/create-tables.sh"]
 
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: passwd
+      MYSQL_DATABASE: ceer
+      MYSQL_USER: ceer
+      MYSQL_PASSWORD: ceer
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=ceer mysql -h127.0.0.1 -uceer -e 'SELECT 1' ceer"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  flyway:
+    image: flyway/flyway:11
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - -url=jdbc:mysql://mysql:3306/ceer
+      - -user=ceer
+      - -password=ceer
+      - -connectRetries=60
+      - migrate
+    volumes:
+      - ../refinery/migrations:/flyway/sql:ro
+
 volumes:
   localstack-data:
+  mysql-data:
