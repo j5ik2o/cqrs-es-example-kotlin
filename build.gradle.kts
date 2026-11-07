@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.SourceSetContainer
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -18,6 +19,8 @@ val jacksonAnnotationsVersion = "2.22"
 val ulidVersion = "5.2.4"
 val eventStoreAdapterVersion = "5.1.0"
 val awsSdkVersion = "2.57.11"
+val awsLambdaCoreVersion = "1.4.1"
+val awsLambdaEventsVersion = "3.16.1"
 
 allprojects {
     repositories {
@@ -169,6 +172,11 @@ project(":rmu") {
         "implementation"("org.springframework:spring-context")
         "implementation"("org.springframework.boot:spring-boot-starter-jdbc")
         "implementation"("software.amazon.awssdk:dynamodb:$awsSdkVersion")
+        "implementation"("software.amazon.awssdk:sqs:$awsSdkVersion")
+        "implementation"("software.amazon.awssdk:secretsmanager:$awsSdkVersion")
+        "implementation"("com.amazonaws:aws-lambda-java-core:$awsLambdaCoreVersion")
+        "implementation"("com.amazonaws:aws-lambda-java-events:$awsLambdaEventsVersion")
+        "implementation"("com.fasterxml.jackson.core:jackson-databind:$jacksonVersion")
 
         "runtimeOnly"("com.mysql:mysql-connector-j")
 
@@ -179,6 +187,20 @@ project(":rmu") {
         "testImplementation"("org.flywaydb:flyway-core")
         "testImplementation"("org.flywaydb:flyway-mysql")
         "testImplementation"("com.mysql:mysql-connector-j")
+    }
+
+    // Lambda loads the handler classes from the ZIP root and the dependency JARs from lib/.
+    val runtimeClasspath = configurations.getByName("runtimeClasspath")
+    val mainSourceSet = (extensions.getByName("sourceSets") as SourceSetContainer).getByName("main")
+    tasks.register<Zip>("lambdaZip") {
+        group = "build"
+        description =
+            "Builds the Lambda deployment package with the RMU, recovery worker, and resync worker handlers."
+        dependsOn(tasks.named("classes"))
+        archiveFileName.set("rmu-lambda.zip")
+        destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+        from(mainSourceSet.output)
+        from(runtimeClasspath.filter { it.name.endsWith(".jar") }) { into("lib") }
     }
 }
 

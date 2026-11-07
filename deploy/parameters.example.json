@@ -1,0 +1,46 @@
+[
+  {
+    "ParameterKey": "CodeS3Bucket",
+    "ParameterValue": "your-lambda-artifacts-bucket"
+  },
+  {
+    "ParameterKey": "CodeS3Key",
+    "ParameterValue": "rmu/rmu-lambda-0123456789ab.zip"
+  },
+  {
+    "ParameterKey": "CodeS3ObjectVersion",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "HeadStreamArn",
+    "ParameterValue": "arn:aws:dynamodb:ap-northeast-1:123456789012:table/head/stream/2026-01-01T00:00:00.000"
+  },
+  {
+    "ParameterKey": "HeadTableName",
+    "ParameterValue": "head"
+  },
+  {
+    "ParameterKey": "JournalTableName",
+    "ParameterValue": "journal"
+  },
+  {
+    "ParameterKey": "DataSourceUrl",
+    "ParameterValue": "jdbc:mysql://db.example:3306/ceer"
+  },
+  {
+    "ParameterKey": "DataSourceSecretArn",
+    "ParameterValue": "arn:aws:secretsmanager:ap-northeast-1:123456789012:secret:ceer/rmu-mysql-AbCdEf"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "SubnetIds",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "SecurityGroupIds",
+    "ParameterValue": ""
+  }
+]

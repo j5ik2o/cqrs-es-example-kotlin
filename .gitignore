@@ -16,3 +16,6 @@ out/
 
 ### macOS ###
 .DS_Store
+
+### Deployment ###
+deploy/parameters.json
