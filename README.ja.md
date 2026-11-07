@@ -67,6 +67,10 @@ Write API は 8 つの Mutation と `healthCheck` を公開します。集約は
 
 Query の `healthCheck` は `OK` を返します。
 
+Write API は呼び出し元を認証しません。各 Mutation はクライアントが渡した `executorId` を実行者として使うため、API に到達できる人は管理者として操作できます。認証層を置かずに公開しないでください。実運用では、認証済みのコンテキストから実行者 ID を取得してください。Java 版も同じです。
+
+コマンドプロセッサは楽観ロックの競合を再試行しません。同じ GroupChat に対する同時実行では、後から保存する側が GraphQL エラーになります。Java 版と同じ挙動です。
+
 ## ローカルで動かす
 
 LocalStack を起動し、3 つの DynamoDB テーブルを作ります。
@@ -120,6 +124,7 @@ docker compose -f tools/docker-compose/docker-compose-local.yml down
 | `HEAD_TABLE_NAME` | `head` | head テーブル |
 | `SNAPSHOT_AID_INDEX_NAME` | `snapshot-aid-index` | snapshot の GSI 名 |
 | `SNAPSHOT_INTERVAL` | `10` | 何イベントごとにスナップショットを取るか |
+| `GRAPHIQL_ENABLED` | `true` | GraphiQL を有効にするか |
 
 ## 保存形式
 
@@ -142,7 +147,7 @@ command 側は ESA v5 の 3 テーブル構成を使います。
 - `GroupChatTest` は集約の振る舞い、入力の検証、イベントの再生を確認します。
 - `GroupChatSerializationTest` はイベントとスナップショットの payload を確認します。payload に envelope のメタデータが入らないことも確認します。
 - `GroupChatRepositoryImplTest` は LocalStack に対して journal、snapshot、head の項目と楽観ロックを確認します。
-- `GroupChatMutationResolverTest` は GraphQL のスキーマを通して 8 つの Mutation と `healthCheck` を実行します。
+- `GroupChatMutationResolverTest` は GraphQL のスキーマを通して 8 つの Mutation と `healthCheck` を実行します。認可エラーと不正な ID が GraphQL エラーになることも確認します。
 
 ## CI
 

@@ -12,6 +12,14 @@ import com.github.j5ik2o.cqrs.es.kotlin.domain.useraccount.UserAccountId
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Component
 
+/**
+ * Command processor for GroupChat.
+ *
+ * Each command reads the aggregate, applies the change, and stores the result. Two concurrent
+ * commands on the same aggregate can conflict; the later store fails the ESA optimistic lock and
+ * the failure is returned as a GraphQL error. The processor does not retry, matching the Java v5
+ * implementation.
+ */
 @Component
 @Profile("write")
 class GroupChatCommandProcessor(

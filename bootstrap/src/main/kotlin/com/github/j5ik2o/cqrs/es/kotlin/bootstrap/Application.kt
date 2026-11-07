@@ -2,9 +2,11 @@ package com.github.j5ik2o.cqrs.es.kotlin.bootstrap
 
 import org.apache.commons.cli.DefaultParser
 import org.apache.commons.cli.Options
+import org.apache.commons.cli.ParseException
 import org.springframework.boot.SpringApplication
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.context.annotation.ComponentScan
+import kotlin.system.exitProcess
 
 @SpringBootApplication
 @ComponentScan(basePackages = ["com.github.j5ik2o.cqrs.es.kotlin"])
@@ -18,7 +20,14 @@ class Application {
                     addOption("r", "read-api", false, "read api")
                     addOption("l", "local-rmu", false, "local rmu")
                 }
-            val commandLine = DefaultParser().parse(options, args)
+            val commandLine =
+                try {
+                    // Spring Boot options such as --server.port=... must pass through unchanged.
+                    DefaultParser().parse(options, args, true)
+                } catch (e: ParseException) {
+                    System.err.println(e.message)
+                    exitProcess(1)
+                }
             val profile =
                 when {
                     commandLine.hasOption("w") -> {
@@ -26,15 +35,18 @@ class Application {
                     }
 
                     commandLine.hasOption("r") -> {
-                        error("read api is not implemented yet")
+                        System.err.println("read api is not implemented yet")
+                        exitProcess(1)
                     }
 
                     commandLine.hasOption("l") -> {
-                        error("local rmu is not implemented yet")
+                        System.err.println("local rmu is not implemented yet")
+                        exitProcess(1)
                     }
 
                     else -> {
-                        error("profile is not specified")
+                        System.err.println("profile is not specified. Use -w for the write api.")
+                        exitProcess(1)
                     }
                 }
             SpringApplication(Application::class.java)

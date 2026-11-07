@@ -3,7 +3,7 @@ spring:
     banner-mode: "off"
   graphql:
     graphiql:
-      enabled: true
+      enabled: ${GRAPHIQL_ENABLED:true}
 logging:
   level:
     root: info

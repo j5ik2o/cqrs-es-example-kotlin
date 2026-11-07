@@ -17,6 +17,7 @@ import org.springframework.graphql.test.tester.ExecutionGraphQlServiceTester
 import org.springframework.graphql.test.tester.GraphQlTester
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class GroupChatMutationResolverTest {
     private lateinit var graphQlTester: GraphQlTester
@@ -65,19 +66,7 @@ class GroupChatMutationResolverTest {
 
     @Test
     fun `all mutations work through GraphQL`() {
-        val groupChatId =
-            graphQlTester
-                .document(
-                    """
-                    mutation CreateGroupChat(${'$'}input: CreateGroupChatInput!) {
-                      createGroupChat(input: ${'$'}input) { groupChatId }
-                    }
-                    """.trimIndent(),
-                ).variable("input", mapOf("name" to "group-chat-example", "executorId" to adminId))
-                .execute()
-                .path("createGroupChat.groupChatId")
-                .entity(String::class.java)
-                .get()
+        val groupChatId = createGroupChat()
 
         assertEquals(groupChatId, addMember(groupChatId, "ADMIN"))
         val messageId = postMessage(groupChatId)
@@ -87,6 +76,67 @@ class GroupChatMutationResolverTest {
         assertEquals(groupChatId, removeMember(groupChatId))
         assertEquals(groupChatId, deleteGroupChat(groupChatId))
     }
+
+    @Test
+    fun `rejects adding a member by a non administrator`() {
+        val groupChatId = createGroupChat()
+        addMember(groupChatId, "MEMBER")
+        val anotherUserId = UserAccountId.generate().asString()
+
+        graphQlTester
+            .document(
+                """
+                mutation AddMember(${'$'}input: AddMemberInput!) {
+                  addMember(input: ${'$'}input) { groupChatId }
+                }
+                """.trimIndent(),
+            ).variable(
+                "input",
+                mapOf(
+                    "groupChatId" to groupChatId,
+                    "userAccountId" to anotherUserId,
+                    "role" to "MEMBER",
+                    "executorId" to userAccountId,
+                ),
+            ).execute()
+            .errors()
+            .satisfy { errors ->
+                assertTrue(errors.isNotEmpty())
+                assertTrue(errors.any { it.path == "addMember" })
+            }
+    }
+
+    @Test
+    fun `rejects an invalid executor id`() {
+        graphQlTester
+            .document(
+                """
+                mutation CreateGroupChat(${'$'}input: CreateGroupChatInput!) {
+                  createGroupChat(input: ${'$'}input) { groupChatId }
+                }
+                """.trimIndent(),
+            ).variable("input", mapOf("name" to "group-chat-example", "executorId" to "not-a-ulid"))
+            .execute()
+            .errors()
+            .satisfy { errors ->
+                assertTrue(errors.isNotEmpty())
+                assertTrue(errors.any { it.path == "createGroupChat" })
+            }
+    }
+
+    private fun createGroupChat(): String =
+        graphQlTester
+            .document(
+                """
+                mutation CreateGroupChat(${'$'}input: CreateGroupChatInput!) {
+                  createGroupChat(input: ${'$'}input) { groupChatId }
+                }
+                """.trimIndent(),
+            ).variable("input", mapOf("name" to "group-chat-example", "executorId" to adminId))
+            .execute()
+            .path("createGroupChat.groupChatId")
+            .entity(String::class.java)
+            .get()
 
     private fun addMember(
         groupChatId: String,

@@ -9,6 +9,7 @@ import com.github.j5ik2o.cqrs.es.kotlin.domain.groupchat.GroupChatId
 import com.github.j5ik2o.cqrs.es.kotlin.domain.groupchat.GroupChatName
 import com.github.j5ik2o.cqrs.es.kotlin.domain.useraccount.UserAccountId
 import com.github.j5ik2o.event.store.adapter.java.core.EventStoreConfig
+import com.github.j5ik2o.event.store.adapter.java.core.OptimisticLockException
 import com.github.j5ik2o.event.store.adapter.java.core.RetentionPolicy
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.DynamoDbEventStore
 import com.github.j5ik2o.event.store.adapter.java.dynamodb.DynamoDbTableConfig
@@ -39,6 +40,7 @@ import software.amazon.awssdk.services.dynamodb.model.StreamViewType
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @Testcontainers
 class GroupChatRepositoryImplTest {
@@ -137,6 +139,11 @@ class GroupChatRepositoryImplTest {
                         e
                     }
                 assertNotNull(failure)
+                val causes = generateSequence<Throwable>(failure) { it.cause }.take(10).toList()
+                assertTrue(
+                    causes.any { it is OptimisticLockException },
+                    "expected an OptimisticLockException, got: ${causes.map { it::class.qualifiedName }}",
+                )
             } finally {
                 client.close()
             }

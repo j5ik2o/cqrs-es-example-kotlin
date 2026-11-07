@@ -79,6 +79,15 @@ implementation.
 
 The Query type exposes `healthCheck: String!`, which returns `OK`.
 
+The Write API does not authenticate callers. Every mutation trusts the `executorId` supplied by
+the client, so anyone who can reach the API can act as an administrator. Do not expose it without
+an authentication layer. A production deployment should take the executor ID from the
+authenticated context. This matches the Java v5 sample.
+
+The command processor does not retry an optimistic-lock conflict. Two concurrent commands on the
+same group chat can conflict; the later one returns a GraphQL error. This also matches the Java v5
+implementation.
+
 ## Local run
 
 Start LocalStack and create the three DynamoDB tables:
@@ -133,6 +142,7 @@ docker compose -f tools/docker-compose/docker-compose-local.yml down
 | `HEAD_TABLE_NAME` | `head` | Head table |
 | `SNAPSHOT_AID_INDEX_NAME` | `snapshot-aid-index` | Snapshot GSI name |
 | `SNAPSHOT_INTERVAL` | `10` | Snapshot every N events |
+| `GRAPHIQL_ENABLED` | `true` | Enable GraphiQL |
 
 ## Storage layout
 
@@ -162,7 +172,8 @@ Snapshots use the manifest `GroupChat@1`.
 - `GroupChatRepositoryImplTest` runs against LocalStack and checks the journal, snapshot, and head
   items plus the optimistic lock.
 - `GroupChatMutationResolverTest` runs all eight mutations and `healthCheck` through the GraphQL
-  schema.
+  schema, and checks that an authorization failure and an invalid id are returned as GraphQL
+  errors.
 
 ## CI
 
