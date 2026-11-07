@@ -1,0 +1,16 @@
+services:
+  e2e-test:
+    image: e2e-test-kotlin:latest
+    build:
+      context: ../e2e-test
+      dockerfile: Dockerfile
+    environment:
+      WRITE_API_SERVER_BASE_URL: http://write-api-server-1:8080/graphql
+      READ_API_SERVER_BASE_URL: http://read-api-server-1:8080/graphql
+      POLL_TIMEOUT: 60
+      POLL_INTERVAL: 1
+    depends_on:
+      write-api-server-1:
+        condition: service_started
+      read-api-server-1:
+        condition: service_started

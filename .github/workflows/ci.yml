@@ -44,3 +44,14 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew test --no-daemon
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: ./tools/scripts/docker-compose-e2e-test.sh
