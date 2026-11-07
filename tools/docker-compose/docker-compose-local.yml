@@ -1,0 +1,33 @@
+services:
+  localstack:
+    image: localstack/localstack:2.3.2
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: dynamodb,dynamodbstreams
+      DEFAULT_REGION: ap-northeast-1
+      AWS_DEFAULT_REGION: ap-northeast-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health | grep -q '\"dynamodb\"'"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  dynamodb-setup:
+    image: amazon/aws-cli:2.17.0
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: x
+      AWS_SECRET_ACCESS_KEY: x
+      AWS_DEFAULT_REGION: ap-northeast-1
+      DYNAMODB_ENDPOINT: localstack:4566
+    volumes:
+      - ../dynamodb-setup:/scripts:ro
+    entrypoint: ["/bin/sh", "/scripts/create-tables.sh"]
+
+volumes:
+  localstack-data:
