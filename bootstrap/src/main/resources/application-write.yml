@@ -1,0 +1,20 @@
+spring:
+  config:
+    import: classpath:application-common.yml
+  graphql:
+    schema:
+      locations: classpath*:graphql-write/**/
+server:
+  port: ${SERVER_PORT:56080}
+app:
+  dynamo-db:
+    region: ${AWS_REGION:ap-northeast-1}
+    endpoint-url: ${DYNAMODB_ENDPOINT_URL:http://localhost:4566}
+    access-key: ${AWS_ACCESS_KEY_ID:x}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY:x}
+  persistence:
+    journal-table-name: ${JOURNAL_TABLE_NAME:journal}
+    snapshot-table-name: ${SNAPSHOT_TABLE_NAME:snapshot}
+    head-table-name: ${HEAD_TABLE_NAME:head}
+    snapshot-aid-index-name: ${SNAPSHOT_AID_INDEX_NAME:snapshot-aid-index}
+    snapshot-interval: ${SNAPSHOT_INTERVAL:10}

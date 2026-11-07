@@ -1,0 +1,9 @@
+spring:
+  main:
+    banner-mode: "off"
+  graphql:
+    graphiql:
+      enabled: true
+logging:
+  level:
+    root: info
