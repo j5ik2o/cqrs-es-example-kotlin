@@ -1,4 +1,12 @@
 services:
+  # The e2e test reaches the API servers by service name on the compose
+  # network, so publishing them to fixed host ports only risks bind conflicts
+  # on shared or concurrent runners. Reset the inherited port mappings.
+  write-api-server-1:
+    ports: !reset []
+  read-api-server-1:
+    ports: !reset []
+
   e2e-test:
     image: e2e-test-kotlin:latest
     build:

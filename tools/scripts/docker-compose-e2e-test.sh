@@ -41,6 +41,17 @@ docker build -t e2e-test-kotlin:latest -f tools/e2e-test/Dockerfile tools/e2e-te
 "${COMPOSE[@]}" down -v --remove-orphans
 "${COMPOSE[@]}" up --remove-orphans --force-recreate --renew-anon-volumes -d "${SERVICES[@]}"
 
+for service in write-api-server-1 read-api-server-1; do
+  container=$("${COMPOSE[@]}" ps -q "$service")
+  published=$(docker inspect \
+    --format '{{with (index .NetworkSettings.Ports "8080/tcp")}}{{(index . 0).HostPort}}{{end}}' \
+    "$container")
+  if [ -n "$published" ]; then
+    echo "Error: ${service} publishes host port ${published} in the e2e stack" >&2
+    exit 1
+  fi
+done
+
 echo "Running the end-to-end verification"
 "${COMPOSE[@]}" run --rm --no-deps e2e-test
 
