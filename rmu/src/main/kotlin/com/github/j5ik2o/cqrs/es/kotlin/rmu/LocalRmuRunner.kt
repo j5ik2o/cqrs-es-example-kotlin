@@ -18,8 +18,10 @@ import java.time.Instant
  *
  * Order matters. The old order completed the scan before polling, so an update written after the
  * scan had read its head, but before polling began, could leave the 24-hour stream retention before
- * any iterator existed. Resuming the subscription first keeps every record written from then on
- * readable while the scan runs.
+ * any iterator existed. Resuming the subscription first, and waiting for its first successful poll
+ * before scanning, keeps every record written from then on readable while the scan runs. A trimmed
+ * or stale reader is reset and the scan waits for a fresh poll for the same reason, so polling never
+ * stops for the duration of a scan.
  */
 @Component
 @Profile("local-rmu")
@@ -54,11 +56,15 @@ class LocalRmuRunner(
                         logger.warn(
                             "The reader has not reconciled or read a record for longer than the stream retention window; running a full resync",
                         )
+                        // Drop the stale iterators first, then let the subscription read the
+                        // stream again before the scan starts. The scan therefore runs alongside
+                        // a live subscription instead of replacing it.
+                        subscription.reset()
+                        awaitStreamReads()
                         if (!resync("resync after the retention window")) {
                             sleep(backoff.next())
                             continue
                         }
-                        subscription.reset()
                         backoff.reset()
                         continue
                     }
@@ -86,15 +92,19 @@ class LocalRmuRunner(
     }
 
     /**
-     * Resumes the stream subscription, then scans until one reconciliation completes.
+     * Resumes the stream subscription, waits for it to read the stream once, then scans until one
+     * reconciliation completes.
      *
-     * The scan and the subscription run concurrently. An update written while the scan visits the
-     * other aggregates is applied by the subscription; an update the scan has not reached yet is
-     * seen at its new position. Both paths use the same position guard and transaction, so the
-     * overlap is applied once.
+     * Waiting for the first poll is the point of the order: the scan must never start on a
+     * subscription that has not established an iterator yet. After that the scan and the
+     * subscription run concurrently. An update written while the scan visits the other aggregates
+     * is applied by the subscription; an update the scan has not reached yet is seen at its new
+     * position. Both paths use the same position guard and transaction, so the overlap is applied
+     * once.
      */
     internal fun reconcileStartup(): Boolean {
         subscription.start()
+        awaitStreamReads()
         while (!Thread.currentThread().isInterrupted) {
             if (resync("initial reconciliation")) return true
             sleep(backoff.next())
@@ -106,19 +116,33 @@ class LocalRmuRunner(
      * Runs the resync the subscription asked for, if any. It clears the request before the scan:
      * a trim that arrives while the scan runs raises it again, so its gap is not dropped when the
      * scan finishes. A failed attempt raises it again instead of waiting for the retention window.
+     *
+     * The subscription thread resets its iterators and keeps polling after a trim. Waiting for the
+     * next successful poll here means the scan always runs with a live subscription. The reset
+     * belongs to the subscription; repeating it after the scan would only drop fresh iterators.
      */
     internal fun handleResyncRequest(): Boolean {
         if (!subscription.isResyncRequested()) return false
         logger.warn("The stream was trimmed; running a full resync")
         subscription.clearResyncRequest()
+        awaitStreamReads()
         if (!resync("resync after trimmed stream")) {
             subscription.requestResync()
             sleep(backoff.next())
             return true
         }
-        subscription.reset()
         backoff.reset()
         return true
+    }
+
+    /**
+     * Waits until the subscription has completed a successful poll. A reset clears the marker, so
+     * this only returns after a read that started after the reset.
+     */
+    private fun awaitStreamReads() {
+        while (!Thread.currentThread().isInterrupted && subscription.lastPollTime() == null) {
+            sleep(READ_RESUME_INTERVAL)
+        }
     }
 
     private fun resync(label: String): Boolean =
@@ -163,6 +187,7 @@ class LocalRmuRunner(
     companion object {
         internal val STREAM_RETENTION: Duration = Duration.ofHours(24)
         internal val MONITOR_INTERVAL: Duration = Duration.ofSeconds(1)
+        internal val READ_RESUME_INTERVAL: Duration = Duration.ofMillis(10)
 
         /**
          * Returns whether the reader should reconcile every head again. The baseline is the

@@ -15,4 +15,11 @@ interface HeadStreamReader {
 
     /** The time the last record was read, or null when no record has been read yet. */
     fun lastRecordTime(): Instant?
+
+    /**
+     * The time the last poll completed successfully, or null when no poll has completed since the
+     * last [reset]. An empty but successful poll advances this, because an idle stream is not a
+     * stopped reader.
+     */
+    fun lastPollTime(): Instant?
 }

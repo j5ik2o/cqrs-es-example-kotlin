@@ -22,6 +22,13 @@ interface StreamSubscription {
     /** The time the last record was read, or null when no record has been read yet. */
     fun lastRecordTime(): Instant?
 
+    /**
+     * The time the last poll completed successfully, or null when no poll has completed since the
+     * subscription started or was reset. The runner waits for this before scanning, so a long scan
+     * never starts before the stream is actually being read.
+     */
+    fun lastPollTime(): Instant?
+
     /** True when the poller saw a trimmed stream and the runner has not handled it yet. */
     fun isResyncRequested(): Boolean
 

@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class HeadStreamSubscriptionTest {
@@ -24,6 +25,33 @@ class HeadStreamSubscriptionTest {
 
             assertTrue(polled.await(5, TimeUnit.SECONDS))
             assertTrue(reader.polls.get() >= 1)
+        } finally {
+            subscription.stop()
+        }
+    }
+
+    @Test
+    fun `records a successful poll and clears it when the reader is reset`() {
+        val reader = FakeReader()
+        val subscription = HeadStreamSubscription(reader, "head", backoff)
+        subscription.start()
+
+        awaitTrue(5) { subscription.lastPollTime() != null }
+        subscription.stop()
+        subscription.reset()
+
+        assertNull(subscription.lastPollTime())
+    }
+
+    @Test
+    fun `retries after a transient poll failure without waiting for a scan`() {
+        val reader = FakeReader(failure = IllegalStateException("transient"), failOnce = true)
+        val subscription = HeadStreamSubscription(reader, "head", backoff)
+        try {
+            subscription.start()
+
+            awaitTrue(5) { reader.polls.get() >= 2 }
+            assertTrue(subscription.lastPollTime() != null)
         } finally {
             subscription.stop()
         }
@@ -67,6 +95,8 @@ class HeadStreamSubscriptionTest {
                 override fun reset() = Unit
 
                 override fun lastRecordTime(): Instant? = null
+
+                override fun lastPollTime(): Instant? = null
             }
         val subscription = HeadStreamSubscription(reader, "head", backoff, Duration.ofSeconds(2))
 
@@ -113,6 +143,9 @@ class HeadStreamSubscriptionTest {
         val resets = AtomicInteger()
         private val failureRaised = AtomicBoolean(false)
 
+        @Volatile
+        private var lastPoll: Instant? = null
+
         override fun pollOnce(headTableName: String): Int {
             polls.incrementAndGet()
             onPoll?.invoke()
@@ -120,13 +153,17 @@ class HeadStreamSubscriptionTest {
             if (shouldFail) {
                 failure?.let { throw it }
             }
+            lastPoll = Instant.now()
             return 0
         }
 
         override fun reset() {
             resets.incrementAndGet()
+            lastPoll = null
         }
 
         override fun lastRecordTime(): Instant? = null
+
+        override fun lastPollTime(): Instant? = lastPoll
     }
 }

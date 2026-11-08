@@ -8,10 +8,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Polls the head stream on a dedicated thread.
  *
- * Starting it before the initial scan is what closes the retention gap DY-15 warns about. A scan
- * can run longer than the 24-hour stream retention, but a record written after the subscription
- * starts stays readable until this thread consumes it. The subscription and the scan apply through
- * the same position guard and transaction, so an event seen by both is discarded by one of them.
+ * Starting it before the initial scan is what closes the retention gap DY-15 warns about. The
+ * runner waits for the first successful poll before it scans, so the scan never starts before an
+ * iterator exists. A scan can run longer than the 24-hour stream retention, but a record written
+ * after the subscription starts stays readable until this thread consumes it. The subscription and
+ * the scan apply through the same position guard and transaction, so an event seen by both is
+ * discarded by one of them.
  */
 class HeadStreamSubscription(
     private val reader: HeadStreamReader,
@@ -55,6 +57,8 @@ class HeadStreamSubscription(
     }
 
     override fun lastRecordTime(): Instant? = reader.lastRecordTime()
+
+    override fun lastPollTime(): Instant? = reader.lastPollTime()
 
     override fun isResyncRequested(): Boolean = resyncRequested.get()
 

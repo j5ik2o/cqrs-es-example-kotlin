@@ -27,6 +27,9 @@ class HeadStreamPoller(
     @Volatile
     private var lastRecordTime: Instant? = null
 
+    @Volatile
+    private var lastPollCompletedAt: Instant? = null
+
     @Synchronized
     override fun pollOnce(headTableName: String): Int {
         val streamArn = client.streamArn(headTableName)
@@ -81,6 +84,9 @@ class HeadStreamPoller(
             }
             lastEvaluatedShardId = shardPage.lastEvaluatedShardId
         } while (lastEvaluatedShardId != null)
+        // A poll that returned without an exception proves the stream is readable. An empty page
+        // still counts: the runner uses this as the barrier before the full scan.
+        lastPollCompletedAt = Instant.now()
         return processed
     }
 
@@ -90,9 +96,12 @@ class HeadStreamPoller(
         lastSequenceNumbers.clear()
         completedShards.clear()
         lastRecordTime = null
+        lastPollCompletedAt = null
     }
 
     override fun lastRecordTime(): Instant? = lastRecordTime
+
+    override fun lastPollTime(): Instant? = lastPollCompletedAt
 
     private fun nextIteratorAfterLastSequence(
         streamArn: String,
