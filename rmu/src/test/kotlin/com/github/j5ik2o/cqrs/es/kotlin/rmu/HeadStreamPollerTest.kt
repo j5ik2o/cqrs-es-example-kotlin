@@ -7,6 +7,8 @@ import software.amazon.awssdk.services.dynamodb.model.Record
 import software.amazon.awssdk.services.dynamodb.model.StreamRecord
 import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class HeadStreamPollerTest {
     @Test
@@ -28,6 +30,38 @@ class HeadStreamPollerTest {
         assertEquals(2, processed)
         assertEquals(listOf("1", "2"), handled)
         assertEquals(2, client.getRecordsCalls)
+    }
+
+    @Test
+    fun `records a successful poll and clears it on reset`() {
+        val client =
+            FakeHeadStreamClient(
+                shardPages = listOf(ShardPage(listOf("shard-1"), null)),
+                pagesByIterator = mapOf("trim-shard-1" to page(emptyList(), null)),
+            )
+        val poller = newPoller(client, mutableListOf())
+
+        assertNull(poller.lastPollTime())
+        poller.pollOnce("head")
+        assertNotNull(poller.lastPollTime())
+
+        poller.reset()
+        assertNull(poller.lastPollTime())
+    }
+
+    @Test
+    fun `does not record a poll that failed`() {
+        val client =
+            FakeHeadStreamClient(
+                shardPages = listOf(ShardPage(listOf("shard-1"), null)),
+                pagesByIterator = emptyMap(),
+                failuresByIterator = mapOf("trim-shard-1" to IllegalStateException("transient")),
+            )
+        val poller = newPoller(client, mutableListOf())
+
+        assertThrows<IllegalStateException> { poller.pollOnce("head") }
+
+        assertNull(poller.lastPollTime())
     }
 
     @Test

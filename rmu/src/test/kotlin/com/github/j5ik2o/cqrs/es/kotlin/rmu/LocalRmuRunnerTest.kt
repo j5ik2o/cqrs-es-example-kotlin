@@ -3,8 +3,13 @@ package com.github.j5ik2o.cqrs.es.kotlin.rmu
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class LocalRmuRunnerTest {
@@ -112,28 +117,100 @@ class LocalRmuRunnerTest {
     }
 
     @Test
-    fun `handles a trimmed stream request and resets the subscription`() {
+    fun `waits for the first successful poll before the initial scan`() {
+        val subscription = FakeSubscription(polledOnStart = false)
+        val applier = JournalBackedApplier(emptyMap())
+        val scanStarted = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val scanner = HeadScanner { scanStarted.countDown() }
+        val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
+        val result = AtomicBoolean(false)
+        val thread =
+            Thread {
+                result.set(runner.reconcileStartup())
+                finished.countDown()
+            }
+
+        thread.start()
+        try {
+            assertTrue(subscription.pollTimeChecked.await(5, TimeUnit.SECONDS))
+            assertFalse(scanStarted.await(100, TimeUnit.MILLISECONDS))
+
+            subscription.markPolled()
+
+            assertTrue(scanStarted.await(5, TimeUnit.SECONDS))
+            assertTrue(finished.await(5, TimeUnit.SECONDS))
+            assertTrue(result.get())
+        } finally {
+            thread.join(5_000)
+        }
+    }
+
+    @Test
+    fun `waits for the stream to read again before scanning a trimmed stream`() {
         val subscription = FakeSubscription()
         subscription.requestResync()
+        subscription.reset()
         val applier = JournalBackedApplier(emptyMap())
-        var scans = 0
+        val scanStarted = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val scanner = HeadScanner { scanStarted.countDown() }
+        val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
+        val result = AtomicBoolean(false)
+        val thread =
+            Thread {
+                result.set(runner.handleResyncRequest())
+                finished.countDown()
+            }
+
+        thread.start()
+        try {
+            assertTrue(subscription.pollTimeChecked.await(5, TimeUnit.SECONDS))
+            assertFalse(scanStarted.await(100, TimeUnit.MILLISECONDS))
+
+            subscription.markPolled()
+
+            assertTrue(scanStarted.await(5, TimeUnit.SECONDS))
+            assertTrue(finished.await(5, TimeUnit.SECONDS))
+            assertTrue(result.get())
+            assertFalse(subscription.isResyncRequested())
+            assertEquals(1, subscription.resets)
+        } finally {
+            thread.join(5_000)
+        }
+    }
+
+    @Test
+    fun `keeps reading the stream through a transient failure while the initial scan runs`() {
+        val reader = CountingReader(failOnPoll = 2)
+        val subscription = HeadStreamSubscription(reader, "head", Backoff(Duration.ofMillis(1), Duration.ofMillis(1)))
+        val applier = JournalBackedApplier(emptyMap())
+        var successfulPollsSeenDuringScan = 0
         val scanner =
             HeadScanner {
-                scans++
+                val before = reader.successfulPolls.get()
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                while (reader.successfulPolls.get() <= before && System.nanoTime() < deadline) {
+                    Thread.sleep(1)
+                }
+                successfulPollsSeenDuringScan = reader.successfulPolls.get() - before
             }
         val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
 
-        assertTrue(runner.handleResyncRequest())
-
-        assertEquals(1, scans)
-        assertFalse(subscription.isResyncRequested())
-        assertEquals(1, subscription.resets)
+        try {
+            assertTrue(runner.reconcileStartup())
+            assertTrue(successfulPollsSeenDuringScan > 0, "the subscription kept reading during the scan")
+            assertNotNull(subscription.lastPollTime())
+        } finally {
+            subscription.stop()
+        }
     }
 
     @Test
     fun `keeps a trim that arrives during the resync`() {
         val subscription = FakeSubscription()
         subscription.requestResync()
+        subscription.markPolled()
         val applier = JournalBackedApplier(emptyMap())
         val scanner = HeadScanner { subscription.requestResync() }
         val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
@@ -147,6 +224,7 @@ class LocalRmuRunnerTest {
     fun `re-raises the resync request when the resync fails`() {
         val subscription = FakeSubscription()
         subscription.requestResync()
+        subscription.markPolled()
         val applier = JournalBackedApplier(emptyMap())
         val scanner = HeadScanner { throw ReadModelUpdateException("storage down") }
         val runner = newRunner(subscription, Resyncer(applier, scanner, null), applier)
@@ -177,14 +255,22 @@ class LocalRmuRunnerTest {
 
     private class FakeSubscription(
         private val onDeliver: ((HeadEvent) -> Unit)? = null,
+        private val polledOnStart: Boolean = true,
     ) : StreamSubscription {
         var started = false
         var stopped = false
         var resets = 0
+        val pollTimeChecked = CountDownLatch(1)
+
+        @Volatile
         private var requested = false
+
+        @Volatile
+        private var pollTime: Instant? = null
 
         override fun start() {
             started = true
+            if (polledOnStart) markPolled()
         }
 
         override fun stop() {
@@ -193,9 +279,15 @@ class LocalRmuRunnerTest {
 
         override fun reset() {
             resets++
+            pollTime = null
         }
 
         override fun lastRecordTime(): Instant? = null
+
+        override fun lastPollTime(): Instant? {
+            pollTimeChecked.countDown()
+            return pollTime
+        }
 
         override fun isResyncRequested(): Boolean = requested
 
@@ -207,9 +299,41 @@ class LocalRmuRunnerTest {
             requested = false
         }
 
+        fun markPolled() {
+            pollTime = Instant.now()
+        }
+
         fun deliver(event: HeadEvent) {
             onDeliver?.invoke(event)
         }
+    }
+
+    private class CountingReader(
+        private val failOnPoll: Int? = null,
+    ) : HeadStreamReader {
+        val polls = AtomicInteger()
+        val successfulPolls = AtomicInteger()
+
+        @Volatile
+        private var lastPoll: Instant? = null
+
+        override fun pollOnce(headTableName: String): Int {
+            val count = polls.incrementAndGet()
+            if (count == failOnPoll) {
+                throw IllegalStateException("transient poll failure")
+            }
+            lastPoll = Instant.now()
+            successfulPolls.incrementAndGet()
+            return 0
+        }
+
+        override fun reset() {
+            lastPoll = null
+        }
+
+        override fun lastRecordTime(): Instant? = null
+
+        override fun lastPollTime(): Instant? = lastPoll
     }
 
     private class JournalBackedApplier(

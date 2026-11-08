@@ -142,13 +142,15 @@ recovery task in `read_model_recovery_tasks`. The task stores the store id, proj
 version, aggregate id, `seq_nr`, failure kind, and error message. Recovery re-reads the position and
 replays the journal in ascending order, so it is idempotent.
 
-The RMU resumes the head stream subscription before it reconciles every head on startup, so updates
-written during a long scan stay within the stream retention window. The scan runs in parallel, uses a
-consistent read, skips `__config__` and other aggregate types, and fills any lag between the head
-`seq_nr` and the projection position from the journal. The subscription and the scan share the
-`position + 1` guard and transaction, so an event seen by both is applied once. An expired iterator
-resumes after the last processed sequence number. Pending recovery tasks are replayed at startup and
-periodically afterwards.
+The RMU resumes the head stream subscription before it reconciles every head on startup, waits for
+the first successful poll, and then scans while the subscription keeps reading. Updates written
+during a long scan therefore stay within the stream retention window. The scan uses a consistent
+read, skips `__config__` and other aggregate types, and fills any lag between the head `seq_nr` and
+the projection position from the journal. A trimmed stream or an exceeded retention window resets
+the iterators and waits for a fresh poll before the scan, so polling never stops for the duration of
+a scan. The subscription and the scan share the `position + 1` guard and transaction, so an event
+seen by both is applied once. An expired iterator resumes after the last processed sequence number.
+Pending recovery tasks are replayed at startup and periodically afterwards.
 
 ## Local run
 

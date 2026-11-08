@@ -8,9 +8,11 @@ read model change and the `read_model_positions` advance commit in the same tran
 Transient failures are retried with exponential backoff and jitter. Permanent failures, and retries
 that exhaust their budget, are recorded as recovery tasks in `read_model_recovery_tasks`. Recovery
 re-reads the position and replays the journal in order, so it is idempotent. The RMU resumes the head
-stream subscription before it reconciles every head on startup, then scans while the subscription
-keeps applying records (DY-15). A trimmed stream triggers another resync. Each task records the
-store, projection, aggregate, sequence number, and failure kind.
+stream subscription before it reconciles every head on startup, waits for the first successful poll,
+then scans while the subscription keeps applying records (DY-15). A trimmed stream or an exceeded
+retention window resets the iterators and waits for a fresh poll before scanning, so polling never
+stops for the duration of a scan. Each task records the store, projection, aggregate, sequence
+number, and failure kind.
 
 The module also contains the Lambda entry points. `RmuLambdaHandler` applies head stream records and
 returns partial batch failures, `RecoveryWorker` drains pending tasks from SQS, and `ResyncWorker`
