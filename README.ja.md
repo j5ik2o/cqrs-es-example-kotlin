@@ -105,7 +105,7 @@ RMU は head テーブルの DynamoDB Streams を購読します。`INSERT` と 
 
 RMU は起動時に先に Streams の購読を再開し、最初の読み取りが成功するまで待ってから、購読と並行して head を全件照合します。長い Scan 中に書かれた更新も保持期間内に購読で届きます。Scan は ConsistentRead を使い、`__config__` と他の集約型を除外します。head の `seq_nr` と投影位置の差は journal から補います。購読と Scan は同じ「現在位置 + 1」のガードとトランザクションを使うため、両方から届いたイベントは 1 回だけ適用されます。Streams が切り詰められたときや保持期限を超えたときは、イテレータを捨てて購読の読み取りが再開してから全件を再同期するため、Scan 中も購読は止まりません。イテレータが期限切れになったときは、最後に処理したシーケンス番号の次から再開します。保留中の復旧タスクは起動時とその後定期的に再試行します。
 
-Lambda と SQS を使う AWS 向けのデプロイ資産と運用手順は [deploy/README.ja.md](deploy/README.ja.md) にあります。復旧タスクの通知は識別子だけを送り、イベント本文は journal から読み直します。
+Lambda と SQS を使う AWS 向けのデプロイ資産と運用手順は [deploy/README.ja.md](deploy/README.ja.md) にあります。復旧タスクの通知は識別子だけを送り、イベント本文は journal から読み直します。配布物のサイズと JAR の内訳は [docs/LAMBDA_PACKAGE_SIZE.ja.md](docs/LAMBDA_PACKAGE_SIZE.ja.md) に記録しています。
 
 ## ローカルで動かす
 
@@ -259,7 +259,7 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 `.github/workflows/ci.yml` は `main` への push と pull request で 4 つのジョブを実行します。
 
 - `lint`: `./gradlew spotlessCheck`
-- `deploy-assets`: `cfn-lint`、シェルスクリプトの構文確認、`:rmu:lambdaZip` のビルドと中身の確認
+- `deploy-assets`: `cfn-lint`、シェルスクリプトの構文確認、`:rmu:lambdaZip` のビルドと中身の確認、配布物サイズと JAR 一覧のログ出力
 - `test`: `./gradlew test`
 - `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
 

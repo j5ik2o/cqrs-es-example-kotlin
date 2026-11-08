@@ -83,6 +83,15 @@ JDK 17 で配布物を作る。
 
 S3 のキーは、指定がなければ `rmu/rmu-lambda-<SHA-256 の先頭 12 桁>.zip` になる。ビルドのたびにキーが変わるため、CloudFormation は新しい配布物を検出して関数を更新する。スクリプトはアップロード後にキーを表示する。表示されたキーを `parameters.json` の `CodeS3Key` に設定する。
 
+配布物のサイズと `lib/` の内訳を計測するには、次のスクリプトを使う。ビルド済みの ZIP を使うときは `--skip-build` を付ける。
+
+```sh
+./deploy/measure-lambda-package.sh
+./deploy/measure-lambda-package.sh --skip-build
+```
+
+圧縮サイズ、展開後サイズ、大きい順の JAR 一覧、ESA Java 経由の Spanner / Bigtable / SQLite 依存の有無を標準出力に出す。合否のしきい値はない。2026-11-08 時点の計測結果と内訳は [../docs/LAMBDA_PACKAGE_SIZE.ja.md](../docs/LAMBDA_PACKAGE_SIZE.ja.md) にある。
+
 同じキーを使い続ける場合は、バケットのバージョニングを有効にし、アップロードしたオブジェクトのバージョン ID を `CodeS3ObjectVersion` に設定する。`Code` の `S3Key` だけが同じでも、バージョン ID が変われば関数は更新される。
 
 ## 適用手順
@@ -270,4 +279,4 @@ CI の `deploy-assets` ジョブは、`cfn-lint`、シェルスクリプトの�
 - 実際の AWS 環境へのデプロイと、SNS トピックの作成・サブスクリプションの設定。トピック ARN は `AlarmSnsTopicArn` で渡し、リポジトリには置かない。
 - 復旧ワーカーの同時実行数と、1 回に処理するタスク数の調整。
 - 全件再同期の頻度（既定は 1 日 1 回）。テーブルが大きい場合は `ResyncScheduleExpression` を調整する。
-- 配布物は依存をすべて含むため、展開後は約 138 MB になる。直接アップロードの上限を超えるため、S3 に置いて `CodeS3Bucket` と `CodeS3Key` で渡す。250 MB に近づいたらレイヤーの分割を検討する。
+- 配布物は依存をすべて含むため、展開後は約 131.5 MiB（137,883,597 バイト）になる。直接アップロードの上限を超えるため、S3 に置いて `CodeS3Bucket` と `CodeS3Key` で渡す。250 MiB に近づいたらレイヤーの分割を検討する。サイズと JAR の内訳は `./deploy/measure-lambda-package.sh` で計測でき、2026-11-08 時点の結果は [../docs/LAMBDA_PACKAGE_SIZE.ja.md](../docs/LAMBDA_PACKAGE_SIZE.ja.md) にある。
