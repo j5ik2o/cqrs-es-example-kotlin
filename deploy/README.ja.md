@@ -19,7 +19,7 @@
 | `RecoveryWorkerSchedule` | 通知が届かなくても未処理タスクを処理する EventBridge の定期実行。既定は 5 分ごと。 |
 | `ResyncWorkerFunction` | head テーブルを全件 Scan し、journal から遅れを埋める Lambda。ハンドラは `ResyncWorker::handleRequest`。 |
 | `ResyncWorkerSchedule` | 全件再同期の EventBridge の定期実行。既定は 1 日ごと。 |
-| `RecoveryBacklogAlarm` ほか | SQS の滞留、Lambda のエラー、DLQ のメッセージ、定期実行の失敗を見る CloudWatch アラーム。 |
+| `RecoveryBacklogAlarm` ほか | SQS の滞留、Lambda のエラー、両方の DLQ のメッセージ、定期実行の失敗を見る CloudWatch アラーム。しきい値、評価期間、通知先はパラメータで変更する。 |
 
 ## 設定の対応表
 
@@ -39,7 +39,7 @@
 
 `BisectBatchOnFunctionError` は失敗したレコードの範囲を分割し、`ReportBatchItemFailures` は失敗したレコードを Lambda に伝える。DynamoDB Streams では、Lambda が返された失敗のうち最小のシーケンス番号をチェックポイントにして、そこから後続のレコードも再試行する。失敗したレコードより後ろの正常なレコードが再配信されることがあるが、位置ガードが重複を捨てるため結果は変わらない。
 
-`MaximumRecordAgeInSeconds` を 7 日にしても、Streams の保持期間は 24 時間である。Lambda はローカルの reader のような起動時 Scan を行わないため、24 時間を超えて止まった場合は `ResyncWorker` の全件再同期で追いつく。`StartingPosition` は `TRIM_HORIZON` にした。位置ガードが重複を捨てるため、再配信されても結果は変わらない。
+`MaximumRecordAgeInSeconds` を 7 日にしても、Streams の保持期間は 24 時間である。Lambda はローカルの reader のような起動時 Scan を行わないため、24 時間を超えて止まった場合は `ResyncWorker` の全件再同期で追いつく。`StartingPosition` は `TRIM_HORIZON` にした。位置ガードが重複を捨てるため、再配信されても結果は変わらない。停止原因の除去から購読再開、並行 Scan、journal 補完までの具体的な順序と確認コマンドは `docs/RMU_OPERATIONS.ja.md` にまとめた。
 
 Lambda のハンドラは Spring のコンテキストを使わない。`LambdaRmuDependencies` が環境変数から同じ設定を読み、DynamoDB クライアント、JDBC の `JdbcTemplate`、復旧タスクのストア、SQS の notifier を組み立てる。環境変数の名前は `application-common.yml` に合わせてある。
 
@@ -116,6 +116,7 @@ aws lambda invoke \
   --function-name cqrs-es-example-kotlin-rmu-rmu-resync-worker \
   --payload '{}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 960 \
   /tmp/resync-worker-response.json
 ```
 
@@ -182,6 +183,7 @@ aws lambda invoke \
   --function-name cqrs-es-example-kotlin-rmu-rmu-recovery-worker \
   --payload '{"Records":[]}' \
   --cli-binary-format raw-in-base64-out \
+  --cli-read-timeout 360 \
   /tmp/recovery-worker-response.json
 ```
 
@@ -206,7 +208,30 @@ aws lambda invoke \
 - `RecoveryWorkerFunction` と `ResyncWorkerFunction` の `Errors`
 - `RecoveryWorkerSchedule` と `ResyncWorkerSchedule` の `Invocations`、`FailedInvocations`
 
-テンプレートは、復旧キューの滞留、OnFailure キューと復旧 DLQ のメッセージ、復旧ワーカーと再同期ワーカーのエラー、再同期の定期実行の失敗にアラームを付ける。`AlarmSnsTopicArn` を指定したときだけ SNS へ通知する。
+テンプレートは、復旧キューの滞留、OnFailure キューの滞留と OnFailure DLQ、復旧 DLQ、復旧ワーカーと再同期ワーカーのエラー、再同期の定期実行の失敗にアラームを付ける。`AlarmSnsTopicArn` を指定したときだけ SNS へ通知する。
+
+アラームのしきい値、評価期間、メトリクス期間はすべてパラメータで変更できる。既定値は次のとおり。
+
+| パラメータ | 既定 | 用途 |
+|:--|:--|:--|
+| `AlarmSnsTopicArn` | 空 | 通知先の SNS トピック。空ならアラームは作るがアクションは付けない。実値は環境ごとの `parameters.json` で指定する。 |
+| `AlarmPeriodSeconds` | `300` | 全アラーム共通のメトリクス期間（秒）。60 の倍数のみを許可する。 |
+| `RecoveryBacklogThreshold` | `10` | 復旧キューの滞留しきい値。 |
+| `RecoveryBacklogEvaluationPeriods` | `2` | 復旧キューの滞留が連続して必要な期間数。 |
+| `OnFailureQueueThreshold` | `0` | OnFailure キューのしきい値。 |
+| `OnFailureQueueEvaluationPeriods` | `1` | OnFailure キューの評価期間数。 |
+| `OnFailureDlqThreshold` | `0` | OnFailure DLQ のしきい値。 |
+| `OnFailureDlqEvaluationPeriods` | `1` | OnFailure DLQ の評価期間数。 |
+| `RecoveryDlqThreshold` | `0` | 復旧 DLQ のしきい値。 |
+| `RecoveryDlqEvaluationPeriods` | `1` | 復旧 DLQ の評価期間数。 |
+| `RecoveryWorkerErrorsThreshold` | `0` | 復旧ワーカーのエラー数のしきい値。 |
+| `RecoveryWorkerErrorsEvaluationPeriods` | `1` | 復旧ワーカーのエラーの評価期間数。 |
+| `ResyncWorkerErrorsThreshold` | `0` | 再同期ワーカーのエラー数のしきい値。 |
+| `ResyncWorkerErrorsEvaluationPeriods` | `1` | 再同期ワーカーのエラーの評価期間数。 |
+| `ResyncScheduleFailedInvocationsThreshold` | `0` | 定期再同期の起動失敗数のしきい値。 |
+| `ResyncScheduleFailedInvocationsEvaluationPeriods` | `1` | 定期再同期の起動失敗の評価期間数。 |
+
+`deploy/parameters.example.json` にはダミーの SNS ARN と各パラメータの値を入れてある。通知先の実値はリポジトリに置かず、デプロイ時にだけ渡す。アラームごとの一次対応は `docs/RMU_OPERATIONS.ja.md` を参照する。
 
 ## ロールバック
 
@@ -231,6 +256,9 @@ aws cloudformation delete-stack --stack-name cqrs-es-example-kotlin-rmu
 - 復旧と再同期の定期実行が有効で、それぞれのワーカーを呼び出している。
 - 関数が VPC に接続するのは `VpcId` を指定したときだけである。
 - 認証情報を Secrets Manager から読み、環境変数にパスワードを置かない。
+- すべてのアラームがしきい値、評価期間、メトリクス期間をパラメータ参照にし、通知先を `AlarmSnsTopicArn` で切り替えている。
+- `OnFailureDlq` と `RecoveryDlq` の両方に DLQ 滞留アラームがある。
+- `deploy/parameters.example.json` の各キーがテンプレートのパラメータに存在し、アラーム系の値が数値として読める。
 
 `SqsRecoveryNotifierTest` は通知の本文に識別子だけが入り、イベント本文とエラーメッセージが入らないことを確認する。`RecoveryWorkerTest` はバッチの上限、メッセージの再配信、手動起動での失敗を確認する。`ResyncWorkerTest` は件数の返却を確認する。`LambdaStreamRecordsTest` は Lambda のイベント型から SDK v2 のレコードへの変換と、部分バッチの失敗の扱いを確認する。
 
@@ -239,7 +267,7 @@ CI の `deploy-assets` ジョブは、`cfn-lint`、シェルスクリプトの�
 ## 残課題
 
 - MySQL の認証情報は Secrets Manager から読む。ローテーションの手順はまだない。
-- 実際の AWS 環境へのデプロイと、アラームの通知先の設定。
+- 実際の AWS 環境へのデプロイと、SNS トピックの作成・サブスクリプションの設定。トピック ARN は `AlarmSnsTopicArn` で渡し、リポジトリには置かない。
 - 復旧ワーカーの同時実行数と、1 回に処理するタスク数の調整。
 - 全件再同期の頻度（既定は 1 日 1 回）。テーブルが大きい場合は `ResyncScheduleExpression` を調整する。
 - 配布物は依存をすべて含むため、展開後は約 138 MB になる。直接アップロードの上限を超えるため、S3 に置いて `CodeS3Bucket` と `CodeS3Key` で渡す。250 MB に近づいたらレイヤーの分割を検討する。

@@ -225,6 +225,111 @@ class RmuDeploymentTemplateTest {
         )
     }
 
+    /** Checks that every alarm reads its threshold, periods, and notification target from parameters. */
+    @Test
+    fun `parameterizes every alarm threshold evaluation period and notification target`() {
+        val template = template()
+        val parameters = template.path("Parameters")
+        val alarms = cloudWatchAlarms(template)
+
+        assertTrue(alarms.size >= 7, "expected the recovery, retry, resync, and DLQ alarms")
+        for ((name, alarm) in alarms) {
+            val properties = alarm.path("Properties")
+            assertEquals("AlarmPeriodSeconds", properties.at("/Period/Ref").asText(), "$name must share the alarm period")
+            val evaluationPeriods = properties.at("/EvaluationPeriods/Ref").asText()
+            assertTrue(parameters.has(evaluationPeriods), "$name references a missing parameter: $evaluationPeriods")
+            val threshold = properties.at("/Threshold/Ref").asText()
+            assertTrue(parameters.has(threshold), "$name references a missing parameter: $threshold")
+            assertEquals("HasAlarmTopic", properties.at("/AlarmActions/Fn::If/0").asText(), "$name must gate its actions")
+            assertEquals(
+                "AlarmSnsTopicArn",
+                properties.at("/AlarmActions/Fn::If/1/0/Ref").asText(),
+                "$name must use the alarm topic parameter",
+            )
+            assertEquals(
+                "AWS::NoValue",
+                properties.at("/AlarmActions/Fn::If/2/Ref").asText(),
+                "$name must create no action without a topic",
+            )
+        }
+    }
+
+    /** Checks that the alarm parameters reject periods and thresholds operators cannot use. */
+    @Test
+    fun `keeps the alarm parameter bounds meaningful`() {
+        val parameters = template().path("Parameters")
+
+        assertTrue(parameters.at("/AlarmPeriodSeconds/MinValue").asInt() >= 60)
+        val allowedPeriods = parameters.at("/AlarmPeriodSeconds/AllowedValues")
+        assertTrue(allowedPeriods.size() >= 2, "AlarmPeriodSeconds must restrict its values")
+        val defaultPeriod = parameters.at("/AlarmPeriodSeconds/Default").asInt()
+        assertTrue(allowedPeriods.any { it.asInt() == defaultPeriod }, "the default must be allowed")
+        for (period in allowedPeriods) {
+            assertEquals(0, period.asInt() % 60, "AlarmPeriodSeconds must be a multiple of 60: $period")
+        }
+        val names = parameters.fieldNames().asSequence().toList()
+        for (name in names.filter { it.endsWith("EvaluationPeriods") }) {
+            assertTrue(parameters.at("/$name/MinValue").asInt() >= 1, "$name must allow at least one period")
+        }
+        for (name in names.filter { it.endsWith("Threshold") }) {
+            assertTrue(parameters.at("/$name/MinValue").asInt() >= 0, "$name must not allow a negative threshold")
+        }
+    }
+
+    /** Checks that both dead-letter queues have a backlog alarm. */
+    @Test
+    fun `alarms on both dead letter queues`() {
+        val template = template()
+
+        assertEquals(
+            "ApproximateNumberOfMessagesVisible",
+            template.at("/Resources/OnFailureDlqAlarm/Properties/MetricName").asText(),
+        )
+        assertEquals(
+            "OnFailureDlq",
+            template.at("/Resources/OnFailureDlqAlarm/Properties/Dimensions/0/Value/Fn::GetAtt/0").asText(),
+        )
+        assertEquals(
+            "RecoveryDlq",
+            template.at("/Resources/RecoveryDlqAlarm/Properties/Dimensions/0/Value/Fn::GetAtt/0").asText(),
+        )
+    }
+
+    /** Checks that operators can apply the sample parameters without editing the template. */
+    @Test
+    fun `ships example parameters that match the template`() {
+        val parameters = template().path("Parameters")
+        val example = exampleParameters()
+        val keys = example.map { it.path("ParameterKey").asText() }
+
+        assertEquals(keys.size, keys.toSet().size, "the example has duplicate parameter keys")
+        for (key in keys) {
+            assertTrue(parameters.has(key), "the example references an unknown parameter: $key")
+        }
+        for (required in ALARM_PARAMETERS) {
+            assertTrue(keys.contains(required), "the example does not set $required")
+        }
+        val topic = example.first { it.path("ParameterKey").asText() == "AlarmSnsTopicArn" }.path("ParameterValue").asText()
+        assertTrue(
+            topic.isEmpty() || topic.contains(DUMMY_ACCOUNT_ID),
+            "the example must not carry a real notification topic: $topic",
+        )
+        for (name in ALARM_PARAMETERS) {
+            val value = example.first { it.path("ParameterKey").asText() == name }.path("ParameterValue").asText()
+            assertNotNull(value.toIntOrNull(), "$name must be numeric in the example: $value")
+        }
+    }
+
+    /** Checks that the runbook keeps the resync order and the alarm response steps. */
+    @Test
+    fun `documents the long outage resync procedure and alarm response`() {
+        val runbook = readDocument("docs/RMU_OPERATIONS.ja.md")
+
+        for (snippet in RUNBOOK_SNIPPETS) {
+            assertTrue(runbook.contains(snippet), "the operations runbook is missing $snippet")
+        }
+    }
+
     @Test
     fun `refreshes the function code when the build changes`() {
         val template = template()
@@ -256,6 +361,31 @@ class RmuDeploymentTemplateTest {
             )
         }
     }
+
+    /** Returns the CloudWatch alarms keyed by their logical IDs. */
+    private fun cloudWatchAlarms(template: JsonNode): Map<String, JsonNode> =
+        template
+            .path("Resources")
+            .properties()
+            .asSequence()
+            .filter { it.value.path("Type").asText() == "AWS::CloudWatch::Alarm" }
+            .associate { it.key to it.value }
+
+    /** Reads the sample parameter file used for deploy validation. */
+    private fun exampleParameters(): List<JsonNode> =
+        try {
+            mapper.readTree(repositoryFile("deploy/parameters.example.json").toFile()).toList()
+        } catch (e: IOException) {
+            throw UncheckedIOException(e)
+        }
+
+    /** Reads a repository document as UTF-8 text. */
+    private fun readDocument(relative: String): String =
+        try {
+            Files.readString(repositoryFile(relative))
+        } catch (e: IOException) {
+            throw UncheckedIOException(e)
+        }
 
     private fun grantsSecretRead(
         template: JsonNode,
@@ -306,5 +436,35 @@ class RmuDeploymentTemplateTest {
 
     private companion object {
         private const val REPORT_BATCH_ITEM_FAILURES = "ReportBatchItemFailures"
+        private const val DUMMY_ACCOUNT_ID = "123456789012"
+
+        private val ALARM_PARAMETERS =
+            listOf(
+                "AlarmPeriodSeconds",
+                "RecoveryBacklogThreshold",
+                "RecoveryBacklogEvaluationPeriods",
+                "OnFailureQueueThreshold",
+                "OnFailureQueueEvaluationPeriods",
+                "OnFailureDlqThreshold",
+                "OnFailureDlqEvaluationPeriods",
+                "RecoveryDlqThreshold",
+                "RecoveryDlqEvaluationPeriods",
+                "RecoveryWorkerErrorsThreshold",
+                "RecoveryWorkerErrorsEvaluationPeriods",
+                "ResyncWorkerErrorsThreshold",
+                "ResyncWorkerErrorsEvaluationPeriods",
+                "ResyncScheduleFailedInvocationsThreshold",
+                "ResyncScheduleFailedInvocationsEvaluationPeriods",
+            )
+
+        private val RUNBOOK_SNIPPETS =
+            listOf(
+                "update-event-source-mapping",
+                "ResyncWorker",
+                "read_model_recovery_tasks",
+                "AlarmSnsTopicArn",
+                "OnFailureDlqAlarm",
+                "RecoveryDlqAlarm",
+            )
     }
 }

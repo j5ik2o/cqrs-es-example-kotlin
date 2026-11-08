@@ -42,5 +42,69 @@
   {
     "ParameterKey": "SecurityGroupIds",
     "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "AlarmSnsTopicArn",
+    "ParameterValue": "arn:aws:sns:ap-northeast-1:123456789012:cqrs-es-example-kotlin-rmu-alarms"
+  },
+  {
+    "ParameterKey": "AlarmPeriodSeconds",
+    "ParameterValue": "300"
+  },
+  {
+    "ParameterKey": "RecoveryBacklogThreshold",
+    "ParameterValue": "10"
+  },
+  {
+    "ParameterKey": "RecoveryBacklogEvaluationPeriods",
+    "ParameterValue": "2"
+  },
+  {
+    "ParameterKey": "OnFailureQueueThreshold",
+    "ParameterValue": "0"
+  },
+  {
+    "ParameterKey": "OnFailureQueueEvaluationPeriods",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "OnFailureDlqThreshold",
+    "ParameterValue": "0"
+  },
+  {
+    "ParameterKey": "OnFailureDlqEvaluationPeriods",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "RecoveryDlqThreshold",
+    "ParameterValue": "0"
+  },
+  {
+    "ParameterKey": "RecoveryDlqEvaluationPeriods",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "RecoveryWorkerErrorsThreshold",
+    "ParameterValue": "0"
+  },
+  {
+    "ParameterKey": "RecoveryWorkerErrorsEvaluationPeriods",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "ResyncWorkerErrorsThreshold",
+    "ParameterValue": "0"
+  },
+  {
+    "ParameterKey": "ResyncWorkerErrorsEvaluationPeriods",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "ResyncScheduleFailedInvocationsThreshold",
+    "ParameterValue": "0"
+  },
+  {
+    "ParameterKey": "ResyncScheduleFailedInvocationsEvaluationPeriods",
+    "ParameterValue": "1"
   }
 ]
