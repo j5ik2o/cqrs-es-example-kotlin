@@ -13,9 +13,11 @@ RMU（Read Model Updater）の Lambda 配布物の大きさを計測した記録
 # ビルド済みの ZIP を計測する
 ./deploy/measure-lambda-package.sh --skip-build
 
-# 一覧の件数や対象の ZIP を変える
-./deploy/measure-lambda-package.sh --zip /path/to/rmu-lambda.zip --top 30
+# 別の ZIP と一覧の件数を指定する（--zip は読み取り専用）
+./deploy/measure-lambda-package.sh --zip /path/to/rmu-lambda.zip --skip-build --top 30
 ```
+
+`--zip` は計測対象を指定するだけで、そのファイルには書き込みません。既定のパス以外を指定するときは `--skip-build` が必須です。`--zip` を省略すると `:rmu:lambdaZip` をビルドし、既定の配布物を計測します。
 
 展開後サイズは ZIP を一時ディレクトリに展開し、ファイルサイズを合計して求めています。JAR 一覧も展開後のサイズで並べています。ZIP のヘッダーを含むファイルサイズと、`zipinfo` が集計する圧縮後サイズは一致しません。
 

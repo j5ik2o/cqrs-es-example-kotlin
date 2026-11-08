@@ -9,10 +9,16 @@
 # The report is informational. This script does not enforce a size threshold.
 set -euo pipefail
 
+# Keep wc's summary label ("total") and numeric formatting stable regardless of
+# the caller's locale. A localized label would otherwise be summed as if it
+# were a JAR, and a locale with a comma decimal separator would break the sort.
+export LC_ALL=C
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEFAULT_ZIP="${REPO_ROOT}/rmu/build/distributions/rmu-lambda.zip"
 ZIP="$DEFAULT_ZIP"
+ZIP_GIVEN="false"
 TOP="20"
 SKIP_BUILD="false"
 
@@ -21,14 +27,17 @@ usage() {
 Usage: measure-lambda-package.sh [options]
 
 Options:
-  --zip <path>     ZIP to measure. Defaults to rmu/build/distributions/rmu-lambda.zip.
+  --zip <path>     Existing ZIP to measure. It is never modified. Pass
+                   --skip-build when it is not the default path.
   --top <n>        Number of JARs to list. Defaults to 20.
   --skip-build     Reuse an existing ZIP instead of running Gradle first.
   -h, --help       Show this help.
 
-With no --skip-build, the script runs :rmu:lambdaZip with JDK 17 before
-measuring. The expanded size is the sum of the file sizes after unzip, and the
-JAR list is sorted by expanded size. No pass/fail threshold is applied.
+With no --skip-build, the script runs :rmu:lambdaZip with JDK 17 and measures
+the default package. --zip selects a package and is never written to; use it
+with --skip-build unless it points at the default path. The expanded size is
+the sum of the file sizes after unzip, and the JAR list is sorted by expanded
+size. No pass/fail threshold is applied.
 USAGE
 }
 
@@ -36,6 +45,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --zip)
       ZIP="$2"
+      ZIP_GIVEN="true"
       shift 2
       ;;
     --top)
@@ -63,17 +73,19 @@ if ! [[ "$TOP" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
+if [[ "$ZIP_GIVEN" == "true" && "$ZIP" != "$DEFAULT_ZIP" && "$SKIP_BUILD" != "true" ]]; then
+  echo "--zip measures an existing ZIP and is never overwritten: $ZIP" >&2
+  echo "pass --skip-build to measure it, or omit --zip to build the default package." >&2
+  exit 2
+fi
+
 if [[ "$SKIP_BUILD" != "true" ]]; then
   "${REPO_ROOT}/gradlew" -p "${REPO_ROOT}" :rmu:lambdaZip
-  if [[ "$ZIP" != "$DEFAULT_ZIP" ]]; then
-    mkdir -p "$(dirname "$ZIP")"
-    cp "$DEFAULT_ZIP" "$ZIP"
-  fi
 fi
 
 if [[ ! -f "$ZIP" ]]; then
   echo "lambda package not found: $ZIP" >&2
-  echo "run without --skip-build, or pass --zip <path>" >&2
+  echo "run without --skip-build, or pass --zip <path> with --skip-build" >&2
   exit 2
 fi
 
