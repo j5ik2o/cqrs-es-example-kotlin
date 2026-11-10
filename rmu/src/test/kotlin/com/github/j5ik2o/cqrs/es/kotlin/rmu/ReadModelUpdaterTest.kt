@@ -22,6 +22,11 @@ import org.testcontainers.containers.MySQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
+import software.amazon.awssdk.core.SdkBytes
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue
+import software.amazon.awssdk.services.dynamodb.model.OperationType
+import software.amazon.awssdk.services.dynamodb.model.Record
+import software.amazon.awssdk.services.dynamodb.model.StreamRecord
 import java.time.LocalDateTime
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -110,6 +115,25 @@ class ReadModelUpdaterTest {
         assertEquals(2L, applier.position(fixture.aggregateId.asString()))
         assertEquals(1, countMembers(fixture.aggregateId))
         assertEquals("renamed", groupChatName(fixture.aggregateId))
+    }
+
+    @Test
+    fun `discards a record that arrives after a newer record was applied`() {
+        val fixture = newFixture()
+        val applier = newApplier()
+        val updater = ReadModelUpdater(applier)
+        val aggregateId = fixture.aggregateId.asString()
+        val memberAdded = fixture.headEvents[2]
+        fixture.headEvents.take(7).forEach {
+            updater.update(headRecord(aggregateId, it))
+        }
+
+        // Seq 7 removed the member that seq 3 added, so applying seq 3 again would bring it back.
+        val result = updater.update(headRecord(aggregateId, memberAdded))
+
+        assertEquals(ReadModelUpdater.RecordResult.APPLIED, result)
+        assertEquals(7L, applier.position(aggregateId))
+        assertEquals(1, countMembers(fixture.aggregateId))
     }
 
     @Test
@@ -315,6 +339,38 @@ class ReadModelUpdaterTest {
             manifest = event.manifest(),
             payload = serializer.serialize(event),
         )
+
+    private fun headRecord(
+        aggregateId: String,
+        event: HeadEvent,
+    ): Record =
+        Record
+            .builder()
+            .eventName(OperationType.MODIFY)
+            .dynamodb(
+                StreamRecord
+                    .builder()
+                    .newImage(
+                        mapOf(
+                            "aid" to AttributeValue.fromS(aggregateId),
+                            "seq_nr" to AttributeValue.fromN(event.seqNr.toString()),
+                            "events" to
+                                AttributeValue.fromL(
+                                    listOf(
+                                        AttributeValue.fromM(
+                                            mapOf(
+                                                "seq_nr" to AttributeValue.fromN(event.seqNr.toString()),
+                                                "occurred_at" to AttributeValue.fromN("0"),
+                                                "manifest" to AttributeValue.fromS(event.manifest),
+                                                "payload" to
+                                                    AttributeValue.fromB(SdkBytes.fromByteArray(event.payload)),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                        ),
+                    ).build(),
+            ).build()
 
     private data class Fixture(
         val aggregateId: GroupChatId,
