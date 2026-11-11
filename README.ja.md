@@ -44,7 +44,7 @@ Write API は 8 つの Mutation と `healthCheck` を公開します。集約は
 ./gradlew spotlessCheck
 ```
 
-`build` は単体テスト、GraphQL リゾルバのテスト、DynamoDB の結合テスト、RMU のテスト、Read API のテストを実行します。結合テストは Testcontainers で `localstack/localstack:2.3.2` と `mysql:8.0` を起動するため、Docker が必要です。
+`build` は単体テスト、GraphQL リゾルバのテスト、DynamoDB の結合テスト、RMU のテスト、Read API のテストを実行します。結合テストは Testcontainers で `localstack/localstack:4.14.0` と `mysql:26.10` を起動するため、Docker が必要です。
 
 ## Write API
 

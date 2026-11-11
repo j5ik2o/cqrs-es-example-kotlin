@@ -56,7 +56,7 @@ tasks, and the resync path. The AWS deployment asset and its runbook are in
 
 `build` runs the unit tests, the GraphQL resolver tests, the DynamoDB integration test, the RMU
 tests, and the Read API tests. The integration tests use Testcontainers with
-`localstack/localstack:2.3.2` and `mysql:8.0`, so Docker must be running.
+`localstack/localstack:4.14.0` and `mysql:26.10`, so Docker must be running.
 
 ## GraphQL Write API
 
