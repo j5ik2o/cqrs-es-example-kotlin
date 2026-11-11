@@ -117,6 +117,8 @@ docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm dyn
 docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm migration
 ```
 
+MySQL のデータは `mysql-data` ボリュームに残ります。MySQL 26.10 は、この構成が以前使っていた MySQL 8.0 が作ったデータディレクトリでは起動しません。そのボリュームが残っているときは、先に `docker compose -f tools/docker-compose/docker-compose-databases.yml down -v` で消してください。LocalStack のデータも消えます。
+
 実行可能な jar をビルドします。
 
 ```sh

@@ -162,6 +162,11 @@ docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm dyn
 docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm migration
 ```
 
+MySQL keeps its data in the `mysql-data` volume. MySQL 26.10 cannot start on a data directory that
+MySQL 8.0, the earlier image of this stack, created. If such a volume remains, remove it first with
+`docker compose -f tools/docker-compose/docker-compose-databases.yml down -v`. This also removes the
+LocalStack data.
+
 Build the executable jar:
 
 ```sh
