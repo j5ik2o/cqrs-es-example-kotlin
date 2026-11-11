@@ -44,7 +44,7 @@ Write API は 8 つの Mutation と `healthCheck` を公開します。集約は
 ./gradlew spotlessCheck
 ```
 
-`build` は単体テスト、GraphQL リゾルバのテスト、DynamoDB の結合テスト、RMU のテスト、Read API のテストを実行します。結合テストは Testcontainers で `localstack/localstack:2.3.2` と `mysql:8.0` を起動するため、Docker が必要です。
+`build` は単体テスト、GraphQL リゾルバのテスト、DynamoDB の結合テスト、RMU のテスト、Read API のテストを実行します。結合テストは Testcontainers で `localstack/localstack:4.14.0` と `mysql:26.10` を起動するため、Docker が必要です。
 
 ## Write API
 
@@ -116,6 +116,8 @@ docker compose -f tools/docker-compose/docker-compose-databases.yml up -d --wait
 docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm dynamodb-setup
 docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm migration
 ```
+
+MySQL のデータは `mysql-data` ボリュームに残ります。MySQL 26.10 は、この構成が以前使っていた MySQL 8.0 が作ったデータディレクトリでは起動しません。そのボリュームが残っているときは、先に `docker compose -f tools/docker-compose/docker-compose-databases.yml down -v` で消してください。LocalStack のデータも消えます。
 
 実行可能な jar をビルドします。
 

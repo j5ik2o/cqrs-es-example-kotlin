@@ -1,6 +1,6 @@
 services:
   localstack:
-    image: localstack/localstack:2.3.2
+    image: localstack/localstack:4.14.0
     ports:
       - "4566:4566"
     environment:
@@ -34,7 +34,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/create-tables.sh"]
 
   mysql:
-    image: mysql:8.0
+    image: mysql:26.10
     ports:
       - "3306:3306"
     environment:

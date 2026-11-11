@@ -56,7 +56,7 @@ tasks, and the resync path. The AWS deployment asset and its runbook are in
 
 `build` runs the unit tests, the GraphQL resolver tests, the DynamoDB integration test, the RMU
 tests, and the Read API tests. The integration tests use Testcontainers with
-`localstack/localstack:2.3.2` and `mysql:8.0`, so Docker must be running.
+`localstack/localstack:4.14.0` and `mysql:26.10`, so Docker must be running.
 
 ## GraphQL Write API
 
@@ -161,6 +161,11 @@ docker compose -f tools/docker-compose/docker-compose-databases.yml up -d --wait
 docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm dynamodb-setup
 docker compose -f tools/docker-compose/docker-compose-databases.yml run --rm migration
 ```
+
+MySQL keeps its data in the `mysql-data` volume. MySQL 26.10 cannot start on a data directory that
+MySQL 8.0, the earlier image of this stack, created. If such a volume remains, remove it first with
+`docker compose -f tools/docker-compose/docker-compose-databases.yml down -v`. This also removes the
+LocalStack data.
 
 Build the executable jar:
 

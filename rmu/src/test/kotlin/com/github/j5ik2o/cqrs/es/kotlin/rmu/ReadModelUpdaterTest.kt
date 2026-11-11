@@ -414,10 +414,11 @@ class ReadModelUpdaterTest {
     }
 }
 
-internal class TestMySQLContainer : MySQLContainer<TestMySQLContainer>(DockerImageName.parse("mysql:8.0")) {
+internal class TestMySQLContainer : MySQLContainer<TestMySQLContainer>(DockerImageName.parse("mysql:26.10")) {
     init {
         withDatabaseName("ceer")
         withUsername("ceer")
         withPassword("ceer")
+        withConfigurationOverride("mysql-conf")
     }
 }

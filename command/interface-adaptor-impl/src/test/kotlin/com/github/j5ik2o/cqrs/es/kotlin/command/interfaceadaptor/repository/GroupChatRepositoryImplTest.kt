@@ -188,7 +188,7 @@ class GroupChatRepositoryImplTest {
         @Container
         @JvmField
         val localstack: LocalStackContainer =
-            LocalStackContainer(DockerImageName.parse("localstack/localstack:2.3.2"))
+            LocalStackContainer(DockerImageName.parse("localstack/localstack:4.14.0"))
                 .withServices(LocalStackContainer.Service.DYNAMODB)
 
         @JvmStatic
