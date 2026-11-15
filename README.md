@@ -337,12 +337,13 @@ queries filter them out.
 
 ## CI
 
-`.github/workflows/ci.yml` runs four jobs on pushes and pull requests to `main`:
+`.github/workflows/ci.yml` runs five jobs on pushes and pull requests to `main`:
 
 - `lint`: `./gradlew spotlessCheck`
 - `deploy-assets`: `cfn-lint`, shell syntax checks, and a `:rmu:lambdaZip` build plus package checks
 - `test`: `./gradlew test`
 - `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
+- `aislop`: `npm ci`, `npm run check:aislop`, and `npm run test:aislop`
 
 The test and e2e jobs rely on Docker.
 
