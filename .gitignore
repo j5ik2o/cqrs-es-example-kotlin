@@ -19,3 +19,6 @@ out/
 
 ### Deployment ###
 deploy/parameters.json
+
+### Node.js ###
+node_modules/

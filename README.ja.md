@@ -258,12 +258,13 @@ RMU は `tools/refinery/migrations` のマイグレーションで MySQL のリ�
 
 ## CI
 
-`.github/workflows/ci.yml` は `main` への push と pull request で 4 つのジョブを実行します。
+`.github/workflows/ci.yml` は `main` への push と pull request で 5 つのジョブを実行します。
 
 - `lint`: `./gradlew spotlessCheck`
 - `deploy-assets`: `cfn-lint`、シェルスクリプトの構文確認、`:rmu:lambdaZip` のビルドと中身の確認、配布物サイズと JAR 一覧のログ出力
 - `test`: `./gradlew test`
 - `e2e`: `./tools/scripts/docker-compose-e2e-test.sh`
+- `aislop`: `npm ci`、`npm run check:aislop`、`npm run test:aislop`
 
 テストと e2e のジョブは Docker を使います。
 

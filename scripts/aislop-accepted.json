@@ -1,0 +1,5 @@
+{
+  "engines": ["format", "lint", "code-quality", "ai-slop", "security"],
+  "missingToolsAllowed": {},
+  "accepted": []
+}
