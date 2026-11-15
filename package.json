@@ -1,0 +1,12 @@
+{
+  "name": "cqrs-es-example-kotlin-aislop",
+  "private": true,
+  "description": "aislop check entry points for cqrs-es-example-kotlin",
+  "scripts": {
+    "check:aislop": "node scripts/aislop-check-bootstrap.mjs check",
+    "test:aislop": "node scripts/aislop-check-bootstrap.mjs test"
+  },
+  "devDependencies": {
+    "aislop": "0.20.1"
+  }
+}

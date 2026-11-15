@@ -87,3 +87,18 @@ jobs:
         with:
           persist-credentials: false
       - run: ./tools/scripts/docker-compose-e2e-test.sh
+
+  aislop:
+    name: Aislop
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.22.3"
+      - run: npm ci
+      - run: npm run check:aislop
+      - run: npm run test:aislop
