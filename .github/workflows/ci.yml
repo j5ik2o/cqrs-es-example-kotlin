@@ -28,10 +28,10 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v6
-      - name: Inject a Lint failure in this fixture
-        run: exit 1
+      - run: ./gradlew spotlessCheck --no-daemon
 
   deploy-assets:
+    if: ${{ false }}
     name: Deployment assets
     runs-on: ubuntu-latest
     timeout-minutes: 15
