@@ -10,6 +10,9 @@ on:
   pull_request:
     branches:
       - main
+    # Base changes are edited events. Run the checks on metadata edits as well
+    # so a skipped job cannot satisfy a required check.
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   lint:
@@ -102,3 +105,30 @@ jobs:
       - run: npm ci
       - run: npm run check:aislop
       - run: npm run test:aislop
+
+  required:
+    name: CI Required
+    needs: [lint, deploy-assets, test, e2e, aislop]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          DEPLOY_ASSETS_RESULT: ${{ needs.deploy-assets.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          AISLOP_RESULT: ${{ needs.aislop.result }}
+        shell: bash
+        run: |
+          failed=0
+          for job in LINT DEPLOY_ASSETS TEST E2E AISLOP; do
+            variable="${job}_RESULT"
+            result="${!variable}"
+            if [[ "$result" != success ]]; then
+              printf '::error::%s result: %s\n' "$job" "${result:-missing}"
+              failed=1
+            fi
+          done
+          exit "$failed"
