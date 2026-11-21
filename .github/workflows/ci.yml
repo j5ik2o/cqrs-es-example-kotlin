@@ -15,13 +15,73 @@ on:
     types: [opened, synchronize, reopened, edited]
 
 jobs:
+  revision:
+    name: CI Revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Resolve test merge for an edited PR
+        id: resolve
+        if: ${{ github.event.action == 'edited' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ && "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::The edited PR event is missing its number or commit SHAs.'
+            exit 1
+          fi
+
+          # GitHub can schedule an edited event before it refreshes the merge ref.
+          # Read the current ref and pin it only when both parents match this event.
+          printf 'Event checkout: %s; expected parents: %s %s\n' "$GITHUB_SHA" "$BASE_SHA" "$HEAD_SHA"
+          for attempt in {1..12}; do
+            if sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/pull/$PR_NUMBER/merge" |
+                jq -er --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+                  'select([.parents[].sha] == [$base, $head]) | .sha | select(test("^[0-9a-f]{40}$"))'); then
+              printf 'Pinned test merge: %s\n' "$sha"
+              printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [[ "$attempt" == 1 ]]; then
+              # Reading the public PR asks GitHub to compute a test merge.
+              curl --silent --output /dev/null --max-time 5 \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" || true
+            fi
+            if (( attempt < 12 )); then
+              sleep 5
+            fi
+          done
+          echo '::error::No test merge matched the edited PR base and head.'
+          exit 1
+
   lint:
     name: Lint
+    needs: revision
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Lint is already required. Make a resolver error fail Lint too.
+      - name: Verify checkout resolution
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+          REVISION_RESULT: ${{ needs.revision.result }}
+          REVISION_SHA: ${{ needs.revision.outputs.sha }}
+        shell: bash
+        run: |
+          if [[ "$REVISION_RESULT" != success || ( "$EVENT_ACTION" == edited && ! "$REVISION_SHA" =~ ^[0-9a-f]{40}$ ) ]]; then
+            echo '::error::CI could not resolve a checkout for this event.'
+            exit 1
+          fi
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.revision.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-java@v6
         with:
@@ -34,10 +94,11 @@ jobs:
     name: Deployment assets
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: lint
+    needs: [revision, lint]
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.revision.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
@@ -66,12 +127,13 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: lint
+    needs: [revision, lint]
     env:
       JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.revision.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-java@v6
         with:
@@ -84,20 +146,24 @@ jobs:
     name: E2E
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: lint
+    needs: [revision, lint]
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.revision.outputs.sha }}
           persist-credentials: false
       - run: ./tools/scripts/docker-compose-e2e-test.sh
 
   aislop:
     name: Aislop
+    needs: revision
+    if: ${{ github.event.action != 'edited' || needs.revision.outputs.sha != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.revision.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
@@ -108,15 +174,14 @@ jobs:
 
   required:
     name: CI Required
-    needs: [lint, deploy-assets, test, e2e, aislop]
+    needs: [revision, lint, deploy-assets, test, e2e, aislop]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Wait for an external cancellation in this fixture
-        run: sleep 180
       - name: Require every CI job to succeed
         env:
+          REVISION_RESULT: ${{ needs.revision.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           DEPLOY_ASSETS_RESULT: ${{ needs.deploy-assets.result }}
           TEST_RESULT: ${{ needs.test.result }}
@@ -125,7 +190,7 @@ jobs:
         shell: bash
         run: |
           failed=0
-          for job in LINT DEPLOY_ASSETS TEST E2E AISLOP; do
+          for job in REVISION LINT DEPLOY_ASSETS TEST E2E AISLOP; do
             variable="${job}_RESULT"
             result="${!variable}"
             if [[ "$result" != success ]]; then
