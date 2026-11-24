@@ -92,7 +92,7 @@ function fixture(t) {
   // Runs a product job's checkout and verify steps from ci.yml in a fresh clone.
   const productJob = (outputs) => {
     const job = join(dir, `job-${Math.random().toString(36).slice(2)}`);
-    git(dir, "clone", "--quiet", "--no-checkout", origin, job);
+    git(dir, "clone", "--quiet", "--no-checkout", "--no-local", origin, job);
     // Like actions/checkout, fetch only the tip unless a bundle needs the base history.
     git(job, "fetch", "--quiet", ...(outputs.bundle_name ? [] : ["--depth=1"]), "origin", outputs.checkout_ref);
     git(job, "checkout", "--quiet", "--detach", outputs.checkout_ref);
