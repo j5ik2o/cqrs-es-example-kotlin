@@ -361,3 +361,5 @@ work is:
 ## License
 
 MIT or Apache-2.0. See `LICENSE-MIT` and `LICENSE-APACHE`.
+
+<!-- CI validation fixture line (do not merge) -->
